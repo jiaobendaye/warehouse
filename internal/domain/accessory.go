@@ -1,0 +1,49 @@
+// Package domain holds the data types and lightweight validation rules for
+// the warehouse business. Repos and services depend on this package, never
+// the other way around.
+package domain
+
+import (
+	"errors"
+	"strings"
+)
+
+// Accessory is one phone-accessory SKU tracked by the system.
+type Accessory struct {
+	ID                int64  `json:"id"`
+	SKU               string `json:"sku"`
+	Name              string `json:"name"`
+	Unit              string `json:"unit"`
+	CurrentStock      int64  `json:"current_stock"`
+	LowStockThreshold int64  `json:"low_stock_threshold"`
+	Notes             string `json:"notes"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
+// AccessoryUpdate carries the mutable fields of an accessory. SKU is
+// deliberately excluded — SKU is the immutable identity of a catalog item.
+type AccessoryUpdate struct {
+	Name              *string `json:"name,omitempty"`
+	Unit              *string `json:"unit,omitempty"`
+	LowStockThreshold *int64  `json:"low_stock_threshold,omitempty"`
+	Notes             *string `json:"notes,omitempty"`
+}
+
+// Validate checks that an Accessory passed to Create has all required fields
+// and that the threshold is non-negative.
+func (a Accessory) Validate() error {
+	if strings.TrimSpace(a.SKU) == "" {
+		return errors.New("sku is required")
+	}
+	if strings.TrimSpace(a.Name) == "" {
+		return errors.New("name is required")
+	}
+	if strings.TrimSpace(a.Unit) == "" {
+		return errors.New("unit is required")
+	}
+	if a.LowStockThreshold < 0 {
+		return errors.New("low_stock_threshold must be non-negative")
+	}
+	return nil
+}

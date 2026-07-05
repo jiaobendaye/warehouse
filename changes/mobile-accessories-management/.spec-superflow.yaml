@@ -1,0 +1,40 @@
+# .spec-superflow.yaml — lightweight state machine
+# Derived data. Always rebuildable from artifacts. Lost/corrupt → fall back to content-level detection.
+
+# === Core state ===
+state: approved-for-build
+workflow: full
+
+# === Hashes (fast staleness detection) ===
+artifacts_hash: sha256:269bb5a70ddf2bf496017c29b3ab4334e0622d19e74951632b7b65cac011ef59
+contract_hash: sha256:642bb4089f8032a97cfd068e99a5aa40b6f416c03d5efb558b6d267a678d6a53
+
+# === Execution progress ===
+execution_mode: null
+batches_completed: 0
+test_result: null
+
+# === Metadata ===
+change_name: mobile-accessories-management
+last_transition: 2026-07-05T01:35:05.514Z
+last_transition_from: null
+last_transition_to: null
+
+# === Decision points ===
+dp_0_decisions: change name=mobile-accessories-management; intent=Wails+嵌入Web+MCP 的手机配件管理桌面应用; 约束=Wails/SQLite/MCP/无账号; 优化范围=保持聚焦; 沟通偏好=draft for review
+dp_0_confirmed: true
+dp_0_timestamp: "2026-07-05T00:00:00Z"
+dp_1_result: null
+dp_1_timestamp: null
+dp_2_result: "approved: proposal(8 caps) + specs(8 files) + design(7 decisions/6 risks) + tasks(13 batches with TDD)"
+dp_2_timestamp: "2026-07-05T00:00:00Z"
+dp_3_result: "approved: 13 batches with 36 SHALL/MUST fully mapped, Review Gates at B4/B8/B12, Batch Inline mode"
+dp_3_timestamp: "2026-07-05T01:35:05Z"
+dp_4_result: null
+dp_4_timestamp: null
+dp_5_result: null
+dp_5_timestamp: null
+dp_6_result: null
+dp_6_timestamp: null
+dp_7_result: null
+dp_7_timestamp: null

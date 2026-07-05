@@ -1,0 +1,32 @@
+project:
+  name: warehouse
+  description: 手机配件管理桌面应用（Wails + 嵌入 Web + MCP）
+  language: go+ts
+
+artifacts:
+  order:
+    - proposal
+    - specs
+    - design
+    - tasks
+    - execution-contract
+  skip: []
+
+state:
+  dp_0_confirmed: true
+  dp_0_timestamp: "2026-07-05T00:00:00Z"
+  dp_0_decisions: |
+    - change name: mobile-accessories-management
+    - intent: 使用 Wails 实现手机配件管理桌面应用，支持内嵌 Web 与 MCP；核心能力为配件出入库（单/批）+流水记录、按当前库存与阈值判断告急/补货
+    - 已知约束：Wails（Go 后端 + 前端 web）、MCP 协议支持、暂不做账号/权限控制、本地存储优先
+    - 相关优化：保持聚焦，不引入用户体系、审计日志、报表导出等额外能力
+    - 沟通偏好：起草后审阅（draft for review），仅在关键决策点（DP-3/DP-4/DP-7）询问用户
+
+changes:
+  - dir: changes/mobile-accessories-management
+    workflow: full
+
+guards:
+  require_contract_for_build: true
+  require_approval_for_contract: true
+  block_implementation_past_stale_contract: true

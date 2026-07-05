@@ -1,0 +1,10 @@
+{
+  "name": "手机配件管理系统",
+  "outputfilename": "warehouse",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm build",
+  "author": {
+    "name": "jiaobendaye",
+    "email": ""
+  }
+}
