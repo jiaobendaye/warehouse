@@ -1,10 +1,13 @@
-import { Routes, Route, NavLink } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
 import AccessoryList from './pages/AccessoryList';
 import Inbound from './pages/Inbound';
 import Outbound from './pages/Outbound';
 import Flows from './pages/Flows';
 import Replenishment from './pages/Replenishment';
 import Settings from './pages/Settings';
+import { isWails } from './api/client';
+import { EventsOn } from '../wailsjs/runtime/runtime';
 
 const navItems = [
   { to: '/accessories', label: '配件' },
@@ -12,10 +15,23 @@ const navItems = [
   { to: '/outbound', label: '出库' },
   { to: '/flows', label: '流水' },
   { to: '/replenishment', label: '补货' },
-  { to: '/settings', label: '⚙' },
 ];
 
 export default function App() {
+  const navigate = useNavigate();
+
+  // In Wails mode the desktop menu emits 'navigate' events (see menu.go)
+  // to push the user into pages like /settings that are not in the top nav.
+  useEffect(() => {
+    if (!isWails()) return;
+    const off = EventsOn('navigate', (path: string) => {
+      if (typeof path === 'string' && path.startsWith('/')) {
+        navigate(path);
+      }
+    });
+    return off;
+  }, [navigate]);
+
   return (
     <div className="app">
       <nav style={{ display: 'flex', gap: 12, padding: '8px 16px', background: '#f5f5f5' }}>

@@ -11,18 +11,27 @@ import (
 )
 
 // BuildMenu creates the native application menu for the warehouse desktop
-// window. The menu bar exposes a single "操作" dropdown containing the two
-// only actions:
+// window. The "操作" dropdown exposes:
 //
 //   - 在浏览器打开 — opens the configured server address in the system
-//     default browser (handy when the user wants the full window chrome).
-//   - 刷新 — reloads the embedded WebView (e.g. after editing data
-//     outside the GUI).
+//     default browser.
+//   - 刷新 — reloads the embedded WebView.
+//   - 设置… — navigates the WebView to /settings (the page is reachable
+//     only from this menu since it's not in the in-app top nav).
 //
 // Wails requires every top-level menu item to be a SubMenu — on Linux/GTK
 // bare Text items at the top level are silently dropped, which would leave
 // the window with no menu bar at all.
 func BuildMenu(app *App) *wailsMenu.Menu {
+	navigateTo := func(path string) func(*wailsMenu.CallbackData) {
+		return func(_ *wailsMenu.CallbackData) {
+			if app.ctx == nil {
+				return
+			}
+			wailsRuntime.EventsEmit(app.ctx, "navigate", path)
+		}
+	}
+
 	openBrowser := func(_ *wailsMenu.CallbackData) {
 		url := fmt.Sprintf("http://%s:%d", app.cfg.Host, app.cfg.Port)
 		_ = openURL(url)
@@ -39,6 +48,8 @@ func BuildMenu(app *App) *wailsMenu.Menu {
 		wailsMenu.Text("在浏览器打开", nil, openBrowser),
 		wailsMenu.Separator(),
 		wailsMenu.Text("刷新", keys.CmdOrCtrl("r"), reload),
+		wailsMenu.Separator(),
+		wailsMenu.Text("设置…", keys.CmdOrCtrl(","), navigateTo("/settings")),
 	)
 
 	return wailsMenu.NewMenuFromItems(
