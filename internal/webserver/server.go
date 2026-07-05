@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -87,6 +88,18 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	return s.httpServer.ListenAndServe()
+}
+
+// ServeWith accepts a pre-bound listener (used when port fallback has already
+// chosen an alternative port) and serves on it. Updates Addr() to reflect the
+// actual bound address so callers can report the real listen socket.
+func (s *Server) ServeWith(ln net.Listener) error {
+	s.httpServer.Addr = ln.Addr().String()
+	if s.config.Host == "0.0.0.0" {
+		log.Printf("WARN: listening on 0.0.0.0 — remote access enabled (port %s)",
+			ln.Addr().String())
+	}
+	return s.httpServer.Serve(ln)
 }
 
 // Shutdown gracefully shuts down the server with the given context deadline.

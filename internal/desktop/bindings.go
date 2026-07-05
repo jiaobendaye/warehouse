@@ -39,10 +39,16 @@ func (a *App) SetContext(ctx context.Context) { a.ctx = ctx }
 // SetConfig stores the parsed configuration.
 func (a *App) SetConfig(cfg config.Config) { a.cfg = cfg }
 
-// OnStartup is called by Wails after the window is created.
+// OnStartup is called by Wails after the window is created. Starts the
+// embedded HTTP server (REST + MCP + frontend) automatically so the
+// frontend can connect without a manual click; falls back to the next
+// free port if the configured one is in use.
 func (a *App) OnStartup(ctx context.Context) {
 	a.ctx = ctx
 	log.Printf("Wails window started")
+	if err := a.srvMgr.Start(); err != nil {
+		log.Printf("auto-start HTTP server: %v", err)
+	}
 }
 
 // OnShutdown is called by Wails before the window closes. Stops the

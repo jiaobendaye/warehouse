@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { isWails } from '../api/client';
+import * as App from '../../wailsjs/go/desktop/App';
 
 export default function Settings() {
   const [serverRunning, setServerRunning] = useState(false);
@@ -15,38 +16,35 @@ export default function Settings() {
     }
     setStatusLoading(true);
     try {
-      const app = (window as any).go?.main?.App;
-      if (app) {
-        const running = await app.IsServerRunning();
-        setServerRunning(running);
-        if (running) {
-          const addr = await app.ServerAddr();
-          setServerAddr(addr);
-        }
+      const running = await App.IsServerRunning();
+      setServerRunning(running);
+      if (running) {
+        const addr = await App.ServerAddr();
+        setServerAddr(addr);
       }
     } catch {
-      // Bindings not available
+      // Bindings not available yet
     } finally {
       setStatusLoading(false);
     }
   }, []);
 
-  // Refresh on mount
-  useState(() => { refreshStatus(); });
+  // Refresh on mount.
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
 
   const handleToggle = async () => {
     if (!isWails()) return;
-    const app = (window as any).go?.main?.App;
-    if (!app) return;
     setStatusLoading(true);
     try {
       if (serverRunning) {
-        await app.StopServer();
+        await App.StopServer();
         setServerRunning(false);
       } else {
-        await app.StartServer();
+        await App.StartServer();
         setServerRunning(true);
-        setServerAddr(await app.ServerAddr());
+        setServerAddr(await App.ServerAddr());
       }
     } catch (e: any) {
       console.error('Server toggle error:', e);

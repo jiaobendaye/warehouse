@@ -7,12 +7,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/jiaobendaye/warehouse/internal/webserver"
 )
+
+// portScanLimit caps how many consecutive ports we try when falling back from
+// a taken port. Keeps the search bounded so a pathological case (every port
+// in a range held) fails fast instead of spinning through 60k ports.
+const portScanLimit = 100
 
 // ServerManager controls the lifecycle of the embedded HTTP server
 // (REST API + static frontend + MCP endpoint). Both the Wails GUI and
@@ -38,6 +44,8 @@ func NewServerManager(cfg ServerConfig) *ServerManager {
 }
 
 // Start launches the HTTP server. Safe to call when already running (no-op).
+// If the configured port is already in use, walks forward to the next free
+// port (up to portScanLimit attempts) and binds there.
 func (m *ServerManager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -45,20 +53,53 @@ func (m *ServerManager) Start() error {
 		return nil
 	}
 
+	host := m.cfg.Host
+	startPort := m.cfg.Port
+
+	ln, port, err := listenFreePort(host, startPort, portScanLimit)
+	if err != nil {
+		return fmt.Errorf("no free port near %d: %w", startPort, err)
+	}
+	if port != startPort {
+		log.Printf("port %d in use; falling back to %d", startPort, port)
+	}
+
 	m.srv = webserver.New(webserver.Config{
-		Host: m.cfg.Host,
-		Port: m.cfg.Port,
+		Host: host,
+		Port: port,
 	}, m.cfg.APIHandler, m.cfg.MCPHandler)
 
+	m.running = true
+
 	go func() {
-		if err := m.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := m.srv.ServeWith(ln); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
 
-	m.running = true
-	log.Printf("HTTP server started on %s:%d", m.cfg.Host, m.cfg.Port)
+	log.Printf("HTTP server started on %s", m.srv.Addr())
 	return nil
+}
+
+// listenFreePort tries to bind to host:startPort. If that fails (typically
+// because the port is taken), it walks forward — startPort+1, startPort+2,
+// … — until it finds a free port or hits maxAttempts. Returns the live
+// listener so the caller can hand it to http.Server.Serve.
+func listenFreePort(host string, startPort, maxAttempts int) (net.Listener, int, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+	for i := 0; i < maxAttempts; i++ {
+		port := startPort + i
+		if port < 1 || port > 65535 {
+			break
+		}
+		ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+		if err == nil {
+			return ln, port, nil
+		}
+	}
+	return nil, 0, fmt.Errorf("no free port in [%d,%d]", startPort, startPort+maxAttempts-1)
 }
 
 // Stop gracefully shuts down the HTTP server. Safe to call when not running.
