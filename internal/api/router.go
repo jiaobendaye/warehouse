@@ -38,6 +38,7 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 	stk := NewStockHandler(s.Stock)
 	flw := NewFlowHandler(s.Flow)
 	rpl := NewReplenishmentHandler(s.Replenishment)
+	fob := NewFileOutboundHandler(s.Stock, s.Accessory)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Accessory CRUD
@@ -52,6 +53,8 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 		r.Post("/stock/outbound", stk.Outbound)
 		r.Post("/stock/batch_inbound", stk.BatchInbound)
 		r.Post("/stock/batch_outbound", stk.BatchOutbound)
+		r.Post("/stock/file_outbound", fob.Preview)
+		r.Post("/stock/file_outbound/execute", fob.Execute)
 
 		// Flow queries
 		r.Get("/flows", flw.List)

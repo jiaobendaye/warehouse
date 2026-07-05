@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 
-type ToastType = 'success' | 'error';
+type ToastType = 'success' | 'error' | 'warning';
 
 interface ToastState {
   type: ToastType;
@@ -49,7 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             padding: '12px 24px',
             borderRadius: 4,
             color: '#fff',
-            backgroundColor: toast.type === 'success' ? '#52c41a' : '#ff4d4f',
+            backgroundColor: toast.type === 'success' ? '#52c41a' : toast.type === 'warning' ? '#faad14' : '#ff4d4f',
             zIndex: 9999,
             boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
             fontSize: 14,

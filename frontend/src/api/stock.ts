@@ -52,3 +52,57 @@ export function batchInbound(items: InboundCmd[]): Promise<BatchResult> {
 export function batchOutbound(items: OutboundCmd[]): Promise<BatchResult> {
   return apiCall('POST', '/api/v1/stock/batch_outbound', { items });
 }
+
+// ── File outbound ────────────────────────────────────────────────
+
+export interface FileOutboundPreviewItem {
+  accessory_id: number;
+  name: string;
+  quantity: number;
+  current_stock: number;
+}
+
+export interface FileOutboundNotFound {
+  name: string;
+  quantity: number;
+}
+
+export interface FileOutboundPreview {
+  items: FileOutboundPreviewItem[];
+  not_found: FileOutboundNotFound[];
+  total_items: number;
+  matched_count: number;
+  not_found_count: number;
+}
+
+export async function previewFileOutbound(file: File): Promise<FileOutboundPreview> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/v1/stock/file_outbound', { method: 'POST', body: form });
+  if (!res.ok) {
+    let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
+    try { errBody = await res.json(); } catch {}
+    throw errBody;
+  }
+  return res.json();
+}
+
+export interface FileForceOutboundResult {
+  outbound: number;
+  created: number;
+  shortages: number;
+  flows: InventoryFlow[];
+  ids: number[];
+}
+
+export async function executeFileOutbound(file: File): Promise<FileForceOutboundResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/v1/stock/file_outbound/execute', { method: 'POST', body: form });
+  if (!res.ok) {
+    let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
+    try { errBody = await res.json(); } catch {}
+    throw errBody;
+  }
+  return res.json();
+}

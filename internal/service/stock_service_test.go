@@ -728,3 +728,177 @@ func TestStockService_Inbound_ConcurrentIdempotency_Sequential(t *testing.T) {
 		t.Fatalf("expected exactly 1 flow row after 6 calls, got %d", n)
 	}
 }
+// --- FileForceOutbound ---------------------------------------------------
+
+func TestFileForceOutbound_AllSufficient(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a1 := seedAccessoryWithStock(t, acc, "FO-A", 10)
+	a2 := seedAccessoryWithStock(t, acc, "FO-B", 5)
+
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "FO-A", Quantity: 3},
+		{Name: "FO-B", Quantity: 5},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Outbound != 2 {
+		t.Fatalf("expected outbound=2, got %d", res.Outbound)
+	}
+	if res.Created != 0 {
+		t.Fatalf("expected created=0, got %d", res.Created)
+	}
+	if res.Shortages != 0 {
+		t.Fatalf("expected shortages=0, got %d", res.Shortages)
+	}
+	if s := currentStock(t, acc, a1.ID); s != 7 {
+		t.Fatalf("FO-A stock: expected 7, got %d", s)
+	}
+	if s := currentStock(t, acc, a2.ID); s != 0 {
+		t.Fatalf("FO-B stock: expected 0, got %d", s)
+	}
+	if n := flowCount(t, fr, a1.ID); n != 1 {
+		t.Fatalf("FO-A flows: expected 1, got %d", n)
+	}
+}
+
+func TestFileForceOutbound_MissingName_AutoCreated(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "全新的配件", Quantity: 5},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Created != 1 {
+		t.Fatalf("expected created=1, got %d", res.Created)
+	}
+	if res.Shortages != 1 {
+		t.Fatalf("expected shortages=1 (stock was 0), got %d", res.Shortages)
+	}
+	a, err := acc.GetByName(ctx, "全新的配件")
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if a.CurrentStock != 0 {
+		t.Fatalf("expected stock=0, got %d", a.CurrentStock)
+	}
+	if a.LowStockThreshold != 5 {
+		t.Fatalf("expected threshold=5 (shortage), got %d", a.LowStockThreshold)
+	}
+	if n := flowCount(t, fr, a.ID); n != 1 {
+		t.Fatalf("expected 1 flow, got %d", n)
+	}
+}
+
+func TestFileForceOutbound_InsufficientStock(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "FO-LOW", 3)
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "FO-LOW", Quantity: 10},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Shortages != 1 {
+		t.Fatalf("expected shortages=1, got %d", res.Shortages)
+	}
+	if s := currentStock(t, acc, a.ID); s != 0 {
+		t.Fatalf("expected stock=0, got %d", s)
+	}
+	fresh, _ := acc.Get(ctx, a.ID)
+	if fresh.LowStockThreshold != 7 {
+		t.Fatalf("expected threshold=7, got %d", fresh.LowStockThreshold)
+	}
+	if n := flowCount(t, fr, a.ID); n != 1 {
+		t.Fatalf("expected 1 flow, got %d", n)
+	}
+}
+
+func TestFileForceOutbound_EmptyItems_Rejected(t *testing.T) {
+	svc, _, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	_, err := svc.FileForceOutbound(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for nil items")
+	}
+	_, err = svc.FileForceOutbound(context.Background(), []service.FileOutboundItem{})
+	if err == nil {
+		t.Fatal("expected error for empty items")
+	}
+}
+
+func TestFileForceOutbound_InvalidInput_Rejected(t *testing.T) {
+	svc, _, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	_, err := svc.FileForceOutbound(context.Background(), []service.FileOutboundItem{
+		{Name: "X", Quantity: 0},
+	})
+	if err == nil {
+		t.Fatal("expected error for quantity=0")
+	}
+	_, err = svc.FileForceOutbound(context.Background(), []service.FileOutboundItem{
+		{Name: "", Quantity: 3},
+	})
+	if err == nil {
+		t.Fatal("expected error for blank name")
+	}
+}
+
+func TestFileForceOutbound_MixedScenario(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a1 := seedAccessoryWithStock(t, acc, "FO-MIX-OK", 10)
+	a2 := seedAccessoryWithStock(t, acc, "FO-MIX-LOW", 2)
+
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "FO-MIX-OK", Quantity: 5},
+		{Name: "FO-MIX-LOW", Quantity: 8},
+		{Name: "FO-MIX-NEW", Quantity: 4},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Outbound != 3 {
+		t.Fatalf("expected outbound=3, got %d", res.Outbound)
+	}
+	if res.Created != 1 {
+		t.Fatalf("expected created=1, got %d", res.Created)
+	}
+	if res.Shortages != 2 {
+		t.Fatalf("expected shortages=2, got %d", res.Shortages)
+	}
+	if s := currentStock(t, acc, a1.ID); s != 5 {
+		t.Fatalf("FO-MIX-OK stock: expected 5, got %d", s)
+	}
+	if s := currentStock(t, acc, a2.ID); s != 0 {
+		t.Fatalf("FO-MIX-LOW stock: expected 0, got %d", s)
+	}
+	fresh2, _ := acc.Get(ctx, a2.ID)
+	if fresh2.LowStockThreshold != 6 {
+		t.Fatalf("FO-MIX-LOW threshold: expected 6, got %d", fresh2.LowStockThreshold)
+	}
+	a3, _ := acc.GetByName(ctx, "FO-MIX-NEW")
+	if a3.CurrentStock != 0 {
+		t.Fatalf("FO-MIX-NEW stock: expected 0, got %d", a3.CurrentStock)
+	}
+	if a3.LowStockThreshold != 4 {
+		t.Fatalf("FO-MIX-NEW threshold: expected 4, got %d", a3.LowStockThreshold)
+	}
+	for _, id := range []int64{a1.ID, a2.ID, a3.ID} {
+		if n := flowCount(t, fr, id); n != 1 {
+			t.Fatalf("accessory %d: expected 1 flow, got %d", id, n)
+		}
+	}
+}

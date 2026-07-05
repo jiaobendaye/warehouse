@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jiaobendaye/warehouse/internal/domain"
 	"github.com/jiaobendaye/warehouse/internal/repo"
@@ -404,6 +405,144 @@ func (s *StockService) BatchOutbound(ctx context.Context, items []OutboundCmd) (
 	committed = true
 	result.Accepted = len(items)
 	logOp("stock", "batch_outbound", "accepted", result.Accepted, "total", len(items))
+	return result, nil
+}
+
+// FileOutboundItem is one line from a parsed xlsx.
+type FileOutboundItem struct {
+	Name     string `json:"name"`
+	Quantity int64  `json:"quantity"`
+}
+
+// FileForceOutboundResult summarises a force-outbound execution.
+type FileForceOutboundResult struct {
+	Outbound  int                    `json:"outbound"`
+	Created   int                    `json:"created"`
+	Shortages int                    `json:"shortages"`
+	Flows     []domain.InventoryFlow `json:"flows"`
+	IDs       []int64                `json:"ids"`
+}
+
+// FileForceOutbound executes a batch outbound with lenient handling:
+//   - Missing accessories are auto-created with stock=0.
+//   - When stock < needed, current_stock is set to 0 and the
+//     low_stock_threshold is increased by the shortage.
+//   - When stock ≥ needed, normal outbound logic applies.
+//
+// All rows run under a single transaction — any unexpected DB error
+// rolls everything back.
+func (s *StockService) FileForceOutbound(ctx context.Context, items []FileOutboundItem) (FileForceOutboundResult, error) {
+	if len(items) == 0 {
+		return FileForceOutboundResult{}, fmt.Errorf("%w: batch must not be empty", ErrInvalidInput)
+	}
+	for i, it := range items {
+		if it.Quantity <= 0 {
+			return FileForceOutboundResult{}, fmt.Errorf("%w: row %d: quantity must be positive", ErrInvalidInput, i)
+		}
+		if strings.TrimSpace(it.Name) == "" {
+			return FileForceOutboundResult{}, fmt.Errorf("%w: row %d: name is required", ErrInvalidInput, i)
+		}
+	}
+
+	// Pre-resolve every name → accessory, creating missing ones.
+	type row struct {
+		acc      domain.Accessory
+		qty      int64
+		shortage int64 // qty - stock when stock < qty, else 0
+		created  bool
+	}
+	rows := make([]row, len(items))
+	createdCount := 0
+	shortageCount := 0
+
+	for i, it := range items {
+		a, err := s.acc.GetByName(ctx, it.Name)
+		if errors.Is(err, repo.ErrNotFound) {
+			a, err = s.acc.Create(ctx, domain.Accessory{Name: it.Name, LowStockThreshold: 0})
+			if err != nil {
+				return FileForceOutboundResult{}, fmt.Errorf("row %d create %q: %w", i, it.Name, err)
+			}
+			createdCount++
+			rows[i].created = true
+		} else if err != nil {
+			return FileForceOutboundResult{}, fmt.Errorf("row %d lookup %q: %w", i, it.Name, err)
+		}
+		rows[i].acc = a
+		rows[i].qty = it.Quantity
+		if a.CurrentStock < it.Quantity {
+			rows[i].shortage = it.Quantity - a.CurrentStock
+			shortageCount++
+		}
+	}
+
+	// Execute everything in one tx.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return FileForceOutboundResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result := FileForceOutboundResult{
+		Flows:   make([]domain.InventoryFlow, 0, len(items)),
+		IDs:     make([]int64, 0, len(items)),
+		Outbound: len(items),
+		Created:  createdCount,
+		Shortages: shortageCount,
+	}
+
+	for i, r := range rows {
+		// Re-read stock inside tx for correctness.
+		cur, err := s.acc.GetStockTx(ctx, tx, r.acc.ID)
+		if err != nil {
+			return FileForceOutboundResult{}, fmt.Errorf("row %d get stock: %w", i, err)
+		}
+
+		newStock := cur - r.qty
+		if newStock < 0 {
+			newStock = 0
+		}
+		if err := s.acc.SetStock(ctx, tx, r.acc.ID, newStock); err != nil {
+			return FileForceOutboundResult{}, fmt.Errorf("row %d set stock: %w", i, err)
+		}
+
+		// Increase threshold by the actual shortage.
+		if r.shortage > 0 {
+			newThresh := r.acc.LowStockThreshold + r.shortage
+			if err := s.acc.SetThresholdTx(ctx, tx, r.acc.ID, newThresh); err != nil {
+				return FileForceOutboundResult{}, fmt.Errorf("row %d update threshold: %w", i, err)
+			}
+		}
+
+		flow := domain.InventoryFlow{
+			AccessoryID:  r.acc.ID,
+			Type:         domain.FlowTypeOut,
+			Quantity:     r.qty,
+			BalanceAfter: newStock,
+			Remark:       "文件批量出库",
+		}
+		if err := flow.Validate(); err != nil {
+			return FileForceOutboundResult{}, fmt.Errorf("row %d validate flow: %w", i, err)
+		}
+		id, err := s.flow.Insert(ctx, tx, flow)
+		if err != nil {
+			return FileForceOutboundResult{}, fmt.Errorf("row %d insert flow: %w", i, err)
+		}
+		flow.ID = id
+		result.Flows = append(result.Flows, flow)
+		result.IDs = append(result.IDs, id)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return FileForceOutboundResult{}, fmt.Errorf("commit: %w", err)
+	}
+	committed = true
+
+	logOp("stock", "file_force_outbound", "accepted", result.Outbound, "created", result.Created, "shortages", result.Shortages)
 	return result, nil
 }
 

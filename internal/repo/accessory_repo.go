@@ -194,6 +194,16 @@ func (r *AccessoryRepo) SetStock(ctx context.Context, tx *sql.Tx, id, stock int6
 	return nil
 }
 
+// SetThresholdTx bumps low_stock_threshold inside a transaction.
+func (r *AccessoryRepo) SetThresholdTx(ctx context.Context, tx *sql.Tx, id, threshold int64) error {
+	q := `UPDATE accessories SET low_stock_threshold = ?,
+		updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	if _, err := tx.ExecContext(ctx, q, threshold, id); err != nil {
+		return fmt.Errorf("set threshold: %w", err)
+	}
+	return nil
+}
+
 // GetStockTx returns the current stock within a transaction. Useful when
 // the caller needs to check availability atomically with an update.
 func (r *AccessoryRepo) GetStockTx(ctx context.Context, tx *sql.Tx, id int64) (int64, error) {
