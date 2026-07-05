@@ -48,6 +48,10 @@ func startGUI(cfg config.Config, srvMgr *desktop.ServerManager, svcs Services) {
 		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: frontendAssets,
+			// Forward /api/*, /mcp/* and /healthz from the WebView to the
+			// embedded HTTP server so GUI mode uses the same backend as
+			// browser mode (no need for a separate Wails-binding adapter).
+			Handler: desktop.NewAPIProxy(srvMgr.Addr),
 		},
 		OnStartup:  app.OnStartup,
 		OnShutdown: app.OnShutdown,
