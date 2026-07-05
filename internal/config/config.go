@@ -4,7 +4,7 @@
 // Precedence (highest wins):
 //  1. Command-line flags  (--host, --port, --db)
 //  2. Environment variables (WAREHOUSE_HOST, WAREHOUSE_PORT, WAREHOUSE_DB_PATH)
-//  3. Defaults (127.0.0.1:17880, ~/.warehouse/data.db)
+//  3. Defaults (127.0.0.1:17880, ./data/warehouse.db)
 package config
 
 import (
@@ -24,13 +24,9 @@ type Config struct {
 }
 
 // DefaultDBPath returns the default SQLite database location:
-// $HOME/.warehouse/data.db.
+// ./data/warehouse.db (relative to the executable's working directory).
 func DefaultDBPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".warehouse", "data.db")
-	}
-	return filepath.Join(home, ".warehouse", "data.db")
+	return filepath.Join("data", "warehouse.db")
 }
 
 // Parse resolves configuration from args (typically os.Args[1:]),

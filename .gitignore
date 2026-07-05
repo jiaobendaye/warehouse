@@ -1,12 +1,10 @@
-# Local SQLite databases
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
+# Local data directory (SQLite + logs)
+data/
 
 # Wails build output
 build/
 warehouse
+warehouse.exe
 
 # Frontend build (rebuilt via `pnpm build`)
 frontend/dist/

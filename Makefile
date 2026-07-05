@@ -4,19 +4,6 @@ APP_NAME  := warehouse
 OUT_DIR   := build/bin
 WAILS     := $(HOME)/go/bin/wails
 
-help:
-	@echo "Warehouse — Wails 桌面应用 (手机配件管理系统)"
-	@echo ""
-	@echo "  make all          构建全平台"
-	@echo "  make linux        构建 Linux"
-	@echo "  make windows      构建 Windows"
-	@echo "  make macos        构建 macOS (需在 Mac 上运行)"
-	@echo "  make dev          开发模式，热重载"
-	@echo "  make test         单元测试"
-	@echo "  make test-e2e     e2e 集成测试 (--headless)"
-	@echo "  make test-all     全部测试"
-	@echo "  make clean        清理产物"
-	@echo ""
 
 all: linux windows
 
@@ -49,3 +36,17 @@ test-all: test test-e2e
 
 clean:
 	rm -rf $(OUT_DIR) /tmp/warehouse_e2e_test
+
+help:
+	@echo "Warehouse — Wails 桌面应用 (手机配件管理系统)"
+	@echo ""
+	@echo "  make all          构建全平台"
+	@echo "  make linux        构建 Linux"
+	@echo "  make windows      构建 Windows"
+	@echo "  make macos        构建 macOS (需在 Mac 上运行)"
+	@echo "  make dev          开发模式，热重载"
+	@echo "  make test         单元测试"
+	@echo "  make test-e2e     e2e 集成测试 (--headless)"
+	@echo "  make test-all     全部测试"
+	@echo "  make clean        清理产物"
+	@echo ""
