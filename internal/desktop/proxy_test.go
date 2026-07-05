@@ -35,7 +35,7 @@ func TestAPIProxy_ForwardsAPIPaths(t *testing.T) {
 		name, method, path, body string
 	}{
 		{"GET list accessories", http.MethodGet, "/api/v1/accessories", ""},
-		{"POST create accessory", http.MethodPost, "/api/v1/accessories", `{"sku":"x"}`},
+		{"POST create accessory", http.MethodPost, "/api/v1/accessories", `{"name":"x"}`},
 		{"GET mcp sse", http.MethodGet, "/mcp/sse", ""},
 		{"POST mcp messages", http.MethodPost, "/mcp/messages", `{}`},
 		{"GET healthz", http.MethodGet, "/healthz", ""},

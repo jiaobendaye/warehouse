@@ -2,17 +2,17 @@
 //
 // replenishment.scan returns every accessory below its threshold (threshold
 // 0 excluded), sorted by shortage descending. replenishment.check inspects
-// a list of SKUs and returns those that need replenishment plus a not_found
+// a list of names and returns those that need replenishment plus a not_found
 // list. Policy "default" (or "") suggests shortage units; "fixed:N" suggests
-// N units for every short SKU.
+// N units for every short item.
 package mcp
 
 import (
 	"context"
 
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/jiaobendaye/warehouse/internal/service"
+
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // replenishmentScanInput is empty; the tool takes no arguments.
@@ -27,7 +27,7 @@ type replenishmentScanOutput struct {
 
 // replenishmentCheckInput is the JSON shape for replenishment.check.
 type replenishmentCheckInput struct {
-	SKUs   []string `json:"skus"            jsonschema:"sku list to inspect"`
+	Names  []string `json:"names"           jsonschema:"name list to inspect"`
 	Policy string   `json:"policy,omitempty" jsonschema:"suggested-quantity policy: 'default' or 'fixed:N'"`
 }
 
@@ -49,9 +49,9 @@ func registerReplenishmentTools(srv *mcpsdk.Server, svc *service.ReplenishmentSe
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "replenishment.check", Description: "Given a list of SKUs, return those needing replenishment (plus any unknown SKUs).",
+		Name: "replenishment.check", Description: "Given a list of accessory names, return those needing replenishment (plus any unknown names).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in replenishmentCheckInput) (*mcpsdk.CallToolResult, batchCheckOutput, error) {
-		res, err := svc.Check(ctx, in.SKUs, in.Policy)
+		res, err := svc.Check(ctx, in.Names, in.Policy)
 		if err != nil {
 			return nil, batchCheckOutput{}, rpcError(err)
 		}

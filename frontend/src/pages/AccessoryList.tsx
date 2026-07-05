@@ -83,7 +83,6 @@ export default function AccessoryList() {
 
   // ── create modal state ──
   const [showCreate, setShowCreate] = useState(false);
-  const [cSku, setCSku] = useState('');
   const [cName, setCName] = useState('');
   const [cThreshold, setCThreshold] = useState(0);
   const [cNotes, setCNotes] = useState('');
@@ -129,13 +128,12 @@ export default function AccessoryList() {
 
   // ── create helpers ──
   const resetCreateForm = () => {
-    setCSku(''); setCName(''); setCThreshold(0);
+    setCName(''); setCThreshold(0);
     setCNotes(''); setCErrors({});
   };
 
   const validateCreate = (): boolean => {
     const errs: Record<string, string> = {};
-    if (!cSku.trim()) errs.sku = 'SKU 不能为空';
     if (!cName.trim()) errs.name = '名称不能为空';
     if (cThreshold < 0) errs.threshold = '阈值不能小于 0';
     setCErrors(errs);
@@ -147,7 +145,6 @@ export default function AccessoryList() {
     setCSubmitting(true);
     try {
       await createAccessory({
-        sku: cSku.trim(),
         name: cName.trim(),
         low_stock_threshold: cThreshold,
         notes: cNotes.trim() || undefined,
@@ -202,7 +199,7 @@ export default function AccessoryList() {
 
   // ── delete ──
   const handleDelete = async (item: Accessory) => {
-    if (!window.confirm(`确定要删除配件 "${item.name}" (${item.sku}) 吗？`)) return;
+    if (!window.confirm(`确定要删除配件 "${item.name}" 吗？`)) return;
     try {
       await deleteAccessory(item.id);
       showToast('success', '配件已删除');
@@ -215,9 +212,6 @@ export default function AccessoryList() {
   // ── modal sections ──
   const createModal = showCreate && (
     <Modal title="新建配件" onClose={() => { setShowCreate(false); resetCreateForm(); }}>
-      <Field label="SKU *" error={cErrors.sku}>
-        <input style={inp} value={cSku} onChange={e => setCSku(e.target.value)} />
-      </Field>
       <Field label="名称 *" error={cErrors.name}>
         <input style={inp} value={cName} onChange={e => setCName(e.target.value)} />
       </Field>
@@ -237,10 +231,10 @@ export default function AccessoryList() {
   );
 
   const editModal = editItem && (
-    <Modal title={`编辑配件 - ${editItem.sku}`} onClose={() => setEditItem(null)}>
+    <Modal title={`编辑配件 - ${editItem.name}`} onClose={() => setEditItem(null)}>
       <div style={{ ...fieldS }}>
-        <label style={labelS}>SKU</label>
-        <div style={{ padding: '6px 10px', fontSize: 13, color: '#888' }}>{editItem.sku}</div>
+        <label style={labelS}>ID</label>
+        <div style={{ padding: '6px 10px', fontSize: 13, color: '#888' }}>{editItem.id}</div>
       </div>
       <Field label="名称 *" error={eErrors.name}>
         <input style={inp} value={eName} onChange={e => setEName(e.target.value)} />
@@ -269,7 +263,7 @@ export default function AccessoryList() {
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8 }}>
           <input
             style={{ ...inp, width: 240 }}
-            placeholder="搜索 SKU 或名称…"
+            placeholder="搜索名称…"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
           />
@@ -282,7 +276,6 @@ export default function AccessoryList() {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            <th style={thS}>SKU</th>
             <th style={thS}>名称</th>
             <th style={thS}>当前库存</th>
             <th style={thS}>阈值</th>
@@ -291,14 +284,13 @@ export default function AccessoryList() {
         </thead>
         <tbody>
           {loading && (
-            <tr><td style={tdS} colSpan={5}>加载中…</td></tr>
+            <tr><td style={tdS} colSpan={4}>加载中…</td></tr>
           )}
           {!loading && items.length === 0 && (
-            <tr><td style={tdS} colSpan={5}>暂无数据</td></tr>
+            <tr><td style={tdS} colSpan={4}>暂无数据</td></tr>
           )}
           {!loading && items.map((item, i) => (
             <tr key={item.id} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
-              <td style={tdS}>{item.sku}</td>
               <td style={tdS}>{item.name}</td>
               <td style={tdS}>{item.current_stock}</td>
               <td style={tdS}>{item.low_stock_threshold}</td>

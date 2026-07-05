@@ -77,8 +77,8 @@ func TestTranslateError_InvalidInput_MapsTo_32600(t *testing.T) {
 	}
 }
 
-func TestTranslateError_SKUConflict_MapsTo_32005(t *testing.T) {
-	code, _ := mcp.TranslateError(service.ErrSKUConflict)
+func TestTranslateError_NameConflict_MapsTo_32005(t *testing.T) {
+	code, _ := mcp.TranslateError(service.ErrNameConflict)
 	if code != -32005 {
 		t.Fatalf("want code -32005, got %d", code)
 	}
@@ -183,8 +183,7 @@ func TestTool_AccessoryCreateAndGet(t *testing.T) {
 	createParams := testCallToolParams{
 		Name: "accessory.create",
 		Arguments: map[string]any{
-			"sku":                "MCP-A",
-			"name":               "保护壳",
+			"name":                "保护壳-MCP",
 			"low_stock_threshold": 5,
 		},
 	}.toParams()
@@ -196,13 +195,13 @@ func TestTool_AccessoryCreateAndGet(t *testing.T) {
 		t.Fatalf("accessory.create returned IsError: %+v", createRes)
 	}
 	var created struct {
-		ID  int64  `json:"id"`
-		SKU string `json:"sku"`
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
 	}
 	if err := decodeStructured(createRes.StructuredContent, &created); err != nil {
 		t.Fatalf("decode create result: %v", err)
 	}
-	if created.ID == 0 || created.SKU != "MCP-A" {
+	if created.ID == 0 || created.Name != "保护壳-MCP" {
 		t.Fatalf("unexpected create result: %+v", created)
 	}
 
@@ -218,14 +217,14 @@ func TestTool_AccessoryCreateAndGet(t *testing.T) {
 		t.Fatalf("accessory.get returned IsError: %+v", getRes)
 	}
 	var got struct {
-		ID  int64  `json:"id"`
-		SKU string `json:"sku"`
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
 	}
 	if err := decodeStructured(getRes.StructuredContent, &got); err != nil {
 		t.Fatalf("decode get result: %v", err)
 	}
-	if got.ID != created.ID || got.SKU != "MCP-A" {
-		t.Fatalf("got %+v, want id=%d sku=MCP-A", got, created.ID)
+	if got.ID != created.ID || got.Name != "保护壳-MCP" {
+		t.Fatalf("got %+v, want id=%d name=保护壳-MCP", got, created.ID)
 	}
 }
 

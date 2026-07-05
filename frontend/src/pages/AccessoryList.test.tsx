@@ -16,7 +16,6 @@ import { listAccessories } from '../api/accessory';
 const mockItems = [
   {
     id: 1,
-    sku: 'SKU-TEST-001',
     name: '测试螺丝',
     current_stock: 100,
     low_stock_threshold: 20,
@@ -26,7 +25,6 @@ const mockItems = [
   },
   {
     id: 2,
-    sku: 'SKU-TEST-002',
     name: '测试螺母',
     current_stock: 50,
     low_stock_threshold: 10,
@@ -68,12 +66,10 @@ describe('AccessoryList', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('SKU-TEST-001')).toBeInTheDocument();
+      expect(screen.getByText('测试螺丝')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('测试螺丝')).toBeInTheDocument();
     expect(screen.getByText('100')).toBeInTheDocument();
-    expect(screen.getByText('SKU-TEST-002')).toBeInTheDocument();
     expect(screen.getByText('测试螺母')).toBeInTheDocument();
   });
 

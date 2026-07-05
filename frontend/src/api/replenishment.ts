@@ -2,7 +2,6 @@ import { apiCall } from './client';
 
 export interface ReplenishmentItem {
   accessory_id: number;
-  sku: string;
   name: string;
   current_stock: number;
   threshold: number;
@@ -19,6 +18,6 @@ export function scan(): Promise<{ items: ReplenishmentItem[] }> {
   return apiCall('GET', '/api/v1/replenishment/scan');
 }
 
-export function check(skus: string[], policy?: string): Promise<BatchCheckResult> {
-  return apiCall('POST', '/api/v1/replenishment/check', { skus, policy });
+export function check(names: string[], policy?: string): Promise<BatchCheckResult> {
+  return apiCall('POST', '/api/v1/replenishment/check', { names, policy });
 }

@@ -37,10 +37,10 @@ func newRouter(t *testing.T) http.Handler {
 	replSvc := service.NewReplenishmentService(accRepo)
 
 	svcs := api.Services{
-		Accessory:      accSvc,
-		Stock:          stockSvc,
-		Flow:           flowSvc,
-		Replenishment:  replSvc,
+		Accessory:     accSvc,
+		Stock:         stockSvc,
+		Flow:          flowSvc,
+		Replenishment: replSvc,
 	}
 
 	return api.NewRouter(svcs, api.RouterOptions{
@@ -114,23 +114,16 @@ func mustError(t *testing.T, resp *http.Response, raw []byte, wantStatus int, wa
 	return m
 }
 
-func newAccessory(t *testing.T, h http.Handler, sku string) domain.Accessory {
+func newAccessory(t *testing.T, h http.Handler, name string) domain.Accessory {
 	t.Helper()
 	body := domain.Accessory{
-		SKU:               sku,
-		Name:              "保护壳 " + sku,
+		Name:              name,
 		LowStockThreshold: 5,
 	}
 	resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
 	m := mustOK(t, resp, raw)
 	idF, _ := m["id"].(float64)
-	out, _ := json.Marshal(m["id"])
-	var id int64
-	_ = json.Unmarshal(out, &id)
 	body.ID = int64(idF)
-	if id != 0 {
-		body.ID = id
-	}
 	return body
 }
 
@@ -140,7 +133,6 @@ func TestAccessories_FullCRUD(t *testing.T) {
 
 	// Create
 	body := domain.Accessory{
-		SKU:               "SKU-A",
 		Name:              "保护壳",
 		LowStockThreshold: 3,
 		Notes:             "iPhone 15",
@@ -155,15 +147,15 @@ func TestAccessories_FullCRUD(t *testing.T) {
 	if id == 0 {
 		t.Fatalf("no id in response: %s", raw)
 	}
-	if sku, _ := m["sku"].(string); sku != "SKU-A" {
-		t.Fatalf("sku mismatch: %v", m["sku"])
+	if name, _ := m["name"].(string); name != "保护壳" {
+		t.Fatalf("name mismatch: %v", m["name"])
 	}
 
 	// Get
 	resp, raw = httpDo(t, h, http.MethodGet, fmt.Sprintf("/api/v1/accessories/%d", id), nil)
 	m = mustOK(t, resp, raw)
-	if m["sku"] != "SKU-A" {
-		t.Fatalf("get sku: %v", m["sku"])
+	if m["name"] != "保护壳" {
+		t.Fatalf("get name: %v", m["name"])
 	}
 
 	// Update (name only)
@@ -192,10 +184,10 @@ func TestAccessories_FullCRUD(t *testing.T) {
 	}
 }
 
-// TestAccessories_DuplicateSKU_409 — second create with same SKU returns 409 CONFLICT.
-func TestAccessories_DuplicateSKU_409(t *testing.T) {
+// TestAccessories_DuplicateName_409 — second create with same name returns 409 CONFLICT.
+func TestAccessories_DuplicateName_409(t *testing.T) {
 	h := newRouter(t)
-	body := domain.Accessory{SKU: "DUPE", Name: "保护壳"}
+	body := domain.Accessory{Name: "DUPE"}
 	resp, _ := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("first create failed: %d", resp.StatusCode)
@@ -330,7 +322,7 @@ func TestReplenishment_Scan_ReturnsShortages(t *testing.T) {
 	h := newRouter(t)
 	newAccessory(t, h, "LOW1") // default threshold 5
 	// Manually set up a zero-threshold accessory that should NOT appear.
-	body := domain.Accessory{SKU: "ZER0", Name: "不需要补货", LowStockThreshold: 0}
+	body := domain.Accessory{Name: "不需要补货", LowStockThreshold: 0}
 	resp, _ := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("zero-thresh create: %d", resp.StatusCode)
@@ -354,7 +346,7 @@ func TestReplenishment_Check_WithFixedPolicy(t *testing.T) {
 	_ = acc
 
 	resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/replenishment/check", map[string]any{
-		"skus":   []string{"FIX"},
+		"names":  []string{"FIX"},
 		"policy": "fixed:42",
 	})
 	m := mustOK(t, resp, raw)

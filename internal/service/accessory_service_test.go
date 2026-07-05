@@ -42,7 +42,6 @@ func TestAccessoryService_Create_Success(t *testing.T) {
 	defer cleanup()
 
 	got, err := svc.Create(context.Background(), domain.Accessory{
-		SKU:               "S-1",
 		Name:              "保护壳",
 		LowStockThreshold: 3,
 		Notes:             "iPhone 15",
@@ -53,8 +52,8 @@ func TestAccessoryService_Create_Success(t *testing.T) {
 	if got.ID == 0 {
 		t.Fatal("expected non-zero ID")
 	}
-	if got.SKU != "S-1" {
-		t.Fatalf("expected SKU S-1, got %q", got.SKU)
+	if got.Name != "保护壳" {
+		t.Fatalf("expected name 保护壳, got %q", got.Name)
 	}
 	if got.CurrentStock != 0 {
 		t.Fatalf("expected stock=0 on create, got %d", got.CurrentStock)
@@ -69,7 +68,7 @@ func TestAccessoryService_Create_ThresholdZeroAllowed(t *testing.T) {
 	defer cleanup()
 
 	got, err := svc.Create(context.Background(), domain.Accessory{
-		SKU: "Z", Name: "n", LowStockThreshold: 0,
+		Name: "n", LowStockThreshold: 0,
 	})
 	if err != nil {
 		t.Fatalf("Create with threshold=0 should succeed, got %v", err)
@@ -79,16 +78,16 @@ func TestAccessoryService_Create_ThresholdZeroAllowed(t *testing.T) {
 	}
 }
 
-func TestAccessoryService_Create_DuplicateSKU(t *testing.T) {
+func TestAccessoryService_Create_DuplicateName(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	if _, err := svc.Create(ctx, domain.Accessory{SKU: "DUP", Name: "a"}); err != nil {
+	if _, err := svc.Create(ctx, domain.Accessory{Name: "DUP"}); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	_, err := svc.Create(ctx, domain.Accessory{SKU: "DUP", Name: "b"})
-	if !errors.Is(err, service.ErrSKUConflict) {
-		t.Fatalf("expected ErrSKUConflict, got %v", err)
+	_, err := svc.Create(ctx, domain.Accessory{Name: "DUP"})
+	if !errors.Is(err, service.ErrNameConflict) {
+		t.Fatalf("expected ErrNameConflict, got %v", err)
 	}
 }
 
@@ -101,10 +100,9 @@ func TestAccessoryService_Create_InvalidInput(t *testing.T) {
 		name string
 		in   domain.Accessory
 	}{
-		{"missing sku", domain.Accessory{Name: "n"}},
-		{"blank sku", domain.Accessory{SKU: "   ", Name: "n"}},
-		{"missing name", domain.Accessory{SKU: "S"}},
-		{"negative threshold", domain.Accessory{SKU: "S", Name: "n", LowStockThreshold: -1}},
+		{"missing name", domain.Accessory{Name: ""}},
+		{"blank name", domain.Accessory{Name: "   "}},
+		{"negative threshold", domain.Accessory{Name: "n", LowStockThreshold: -1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,7 +114,7 @@ func TestAccessoryService_Create_InvalidInput(t *testing.T) {
 	}
 }
 
-// --- Get / GetBySKU ------------------------------------------------------
+// --- Get / GetByName ------------------------------------------------------
 
 func TestAccessoryService_Get_NotFound(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
@@ -127,28 +125,28 @@ func TestAccessoryService_Get_NotFound(t *testing.T) {
 	}
 }
 
-func TestAccessoryService_GetBySKU_NotFound(t *testing.T) {
+func TestAccessoryService_GetByName_NotFound(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
-	_, err := svc.GetBySKU(context.Background(), "NOPE")
+	_, err := svc.GetByName(context.Background(), "NOPE")
 	if !errors.Is(err, service.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 }
 
-func TestAccessoryService_GetBySKU_Found(t *testing.T) {
+func TestAccessoryService_GetByName_Found(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	if _, err := svc.Create(ctx, domain.Accessory{SKU: "K1", Name: "n"}); err != nil {
+	if _, err := svc.Create(ctx, domain.Accessory{Name: "K1"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	got, err := svc.GetBySKU(ctx, "K1")
+	got, err := svc.GetByName(ctx, "K1")
 	if err != nil {
-		t.Fatalf("GetBySKU: %v", err)
+		t.Fatalf("GetByName: %v", err)
 	}
-	if got.SKU != "K1" {
-		t.Fatalf("expected SKU K1, got %q", got.SKU)
+	if got.Name != "K1" {
+		t.Fatalf("expected name K1, got %q", got.Name)
 	}
 }
 
@@ -160,14 +158,14 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	ctx := context.Background()
 
 	items := []domain.Accessory{
-		{SKU: "A-1", Name: "透明保护壳 iPhone"},
-		{SKU: "A-2", Name: "钢化膜 iPhone"},
-		{SKU: "B-1", Name: "数据线 typeC"},
-		{SKU: "A-3", Name: "硅胶壳 iPhone"},
+		{Name: "透明保护壳 iPhone"},
+		{Name: "钢化膜 iPhone"},
+		{Name: "数据线 typeC"},
+		{Name: "硅胶壳 iPhone"},
 	}
 	for _, a := range items {
 		if _, err := svc.Create(ctx, a); err != nil {
-			t.Fatalf("seed %v: %v", a.SKU, err)
+			t.Fatalf("seed %v: %v", a.Name, err)
 		}
 	}
 
@@ -210,16 +208,16 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 		t.Fatalf("expected 2 items on page2, got %d", len(page2))
 	}
 
-	// Case-insensitive sku match
-	bySku, total, err := svc.List(ctx, "b-1", 100, 0)
+	// Case-insensitive name match
+	byName, total, err := svc.List(ctx, "数据线", 100, 0)
 	if err != nil {
-		t.Fatalf("List by sku: %v", err)
+		t.Fatalf("List by name: %v", err)
 	}
-	if total != 1 || len(bySku) != 1 {
-		t.Fatalf("expected 1 match for 'b-1', got total=%d len=%d", total, len(bySku))
+	if total != 1 || len(byName) != 1 {
+		t.Fatalf("expected 1 match for '数据线', got total=%d len=%d", total, len(byName))
 	}
-	if bySku[0].SKU != "B-1" {
-		t.Fatalf("expected SKU B-1, got %q", bySku[0].SKU)
+	if byName[0].Name != "数据线 typeC" {
+		t.Fatalf("expected name 数据线 typeC, got %q", byName[0].Name)
 	}
 }
 
@@ -230,7 +228,7 @@ func TestAccessoryService_Update_Success(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	created, err := svc.Create(ctx, domain.Accessory{
-		SKU: "U-1", Name: "old", LowStockThreshold: 3,
+		Name: "old", LowStockThreshold: 3,
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
@@ -253,28 +251,19 @@ func TestAccessoryService_Update_Success(t *testing.T) {
 	if updated.Notes != "note" {
 		t.Fatalf("notes: %q", updated.Notes)
 	}
-	if updated.SKU != "U-1" {
-		t.Fatalf("SKU must be unchanged, got %q", updated.SKU)
-	}
 }
 
-func TestAccessoryService_Update_RejectsSKUAttempt(t *testing.T) {
-	// Per spec §"修改 SKU 被拒": any attempt to write SKU MUST return 400 Bad Request.
-	// AccessoryUpdate has no SKU field by design (compile-time guard), so we
-	// additionally verify a non-nil same-value pointer is harmless at this
-	// layer — there is no field to write into. The true contract is enforced
-	// at the type level. This test exists to lock in that contract.
+func TestAccessoryService_Update_RenamesName(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	created, err := svc.Create(ctx, domain.Accessory{SKU: "U-2", Name: "n"})
+	created, err := svc.Create(ctx, domain.Accessory{Name: "renameme"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// No SKU field on AccessoryUpdate -> mutating only name is fine.
 	_, err = svc.Update(ctx, created.ID, domain.AccessoryUpdate{Name: strPtr("renamed")})
 	if err != nil {
-		t.Fatalf("Update without SKU should succeed, got %v", err)
+		t.Fatalf("Update should succeed, got %v", err)
 	}
 }
 
@@ -282,7 +271,7 @@ func TestAccessoryService_Update_NegativeThresholdRejected(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	created, err := svc.Create(ctx, domain.Accessory{SKU: "U-3", Name: "n", LowStockThreshold: 0})
+	created, err := svc.Create(ctx, domain.Accessory{Name: "n", LowStockThreshold: 0})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -296,7 +285,7 @@ func TestAccessoryService_Update_ThresholdZeroAllowed(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	created, err := svc.Create(ctx, domain.Accessory{SKU: "U-4", Name: "n", LowStockThreshold: 5})
+	created, err := svc.Create(ctx, domain.Accessory{Name: "n", LowStockThreshold: 5})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -324,7 +313,7 @@ func TestAccessoryService_Delete_NoFlows_OK(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	created, err := svc.Create(ctx, domain.Accessory{SKU: "D-1", Name: "n"})
+	created, err := svc.Create(ctx, domain.Accessory{Name: "n"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -341,7 +330,7 @@ func TestAccessoryService_Delete_WithFlows_Rejected(t *testing.T) {
 	svc, _, fr, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
-	created, err := svc.Create(ctx, domain.Accessory{SKU: "D-2", Name: "n"})
+	created, err := svc.Create(ctx, domain.Accessory{Name: "n"})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}

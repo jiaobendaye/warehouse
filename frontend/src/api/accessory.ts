@@ -2,7 +2,6 @@ import { apiCall } from './client';
 
 export interface Accessory {
   id: number;
-  sku: string;
   name: string;
   current_stock: number;
   low_stock_threshold: number;
@@ -12,7 +11,6 @@ export interface Accessory {
 }
 
 export interface AccessoryCreate {
-  sku: string;
   name: string;
   low_stock_threshold: number;
   notes?: string;

@@ -103,7 +103,7 @@ export default function Flows() {
           <select style={{ ...inp, width: 160 }} value={filterAccId} onChange={e => setFilterAccId(e.target.value ? Number(e.target.value) : '')}>
             <option value="">全部</option>
             {accessories.map(a => (
-              <option key={a.id} value={a.id}>{a.sku} - {a.name}</option>
+              <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
         </div>

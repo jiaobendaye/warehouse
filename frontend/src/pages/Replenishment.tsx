@@ -56,20 +56,20 @@ export default function Replenishment() {
   };
 
   // ── check section ──
-  const [skuText, setSkuText] = useState('');
+  const [nameText, setNameText] = useState('');
   const [policy, setPolicy] = useState('default');
   const [customFactor, setCustomFactor] = useState('2');
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<{ items: ReplenishmentItem[]; notFound: string[] } | null>(null);
 
   const handleCheck = async () => {
-    const skus = skuText.split('\n').map(s => s.trim()).filter(Boolean);
-    if (skus.length === 0) { showToast('error', '请输入至少一个 SKU'); return; }
+    const names = nameText.split('\n').map(s => s.trim()).filter(Boolean);
+    if (names.length === 0) { showToast('error', '请输入至少一个配件名称'); return; }
     setChecking(true);
     setCheckResult(null);
     try {
       const finalPolicy = policy === 'fixed' ? `fixed:${customFactor}` : 'default';
-      const res = await check(skus, finalPolicy);
+      const res = await check(names, finalPolicy);
       setCheckResult({ items: res.items, notFound: res.not_found });
       showToast('success', `检查完成，${res.items.length} 条结果`);
     } catch (err: any) {
@@ -107,7 +107,6 @@ export default function Replenishment() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  <th style={thS}>SKU</th>
                   <th style={thS}>名称</th>
                   <th style={thS}>当前库存</th>
                   <th style={thS}>阈值</th>
@@ -120,7 +119,6 @@ export default function Replenishment() {
                   .sort((a, b) => b.shortage - a.shortage)
                   .map((item, idx) => (
                     <tr key={item.accessory_id} style={rowStyle(item, idx)}>
-                      <td style={tdS}>{item.sku}</td>
                       <td style={tdS}>{item.name}</td>
                       <td style={tdS}>{item.current_stock}</td>
                       <td style={tdS}>{item.threshold}</td>
@@ -152,17 +150,17 @@ export default function Replenishment() {
       <div style={sectionCard}>
         <h3 style={{ margin: '0 0 8px' }}>批量检查</h3>
         <p style={{ fontSize: 13, color: '#666', margin: '0 0 12px' }}>
-          输入 SKU 列表（每行一个），查询补货建议。
+          输入配件名称列表（每行一个），查询补货建议。
         </p>
 
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>
           <div style={{ flex: 1, minWidth: 280 }}>
-            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>SKU 列表</label>
+            <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>名称列表</label>
             <textarea
               style={{ ...inp, width: '100%', minHeight: 100, resize: 'vertical', fontFamily: 'monospace' }}
-              placeholder={"SKU001\nSKU002\nSKU003"}
-              value={skuText}
-              onChange={e => setSkuText(e.target.value)}
+              placeholder={"充电器\n数据线\n保护壳"}
+              value={nameText}
+              onChange={e => setNameText(e.target.value)}
             />
           </div>
           <div style={{ minWidth: 160 }}>
@@ -194,7 +192,7 @@ export default function Replenishment() {
           <div style={{ marginTop: 12 }}>
             {checkResult.notFound.length > 0 && (
               <div style={{ marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#ff4d4f' }}>未找到的 SKU: </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#ff4d4f' }}>未找到的名称: </span>
                 <span style={{ fontSize: 13 }}>{checkResult.notFound.join(', ')}</span>
               </div>
             )}
@@ -202,7 +200,6 @@ export default function Replenishment() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th style={thS}>SKU</th>
                     <th style={thS}>名称</th>
                     <th style={thS}>当前库存</th>
                     <th style={thS}>阈值</th>
@@ -215,7 +212,6 @@ export default function Replenishment() {
                     .sort((a, b) => b.shortage - a.shortage)
                     .map((item, idx) => (
                       <tr key={item.accessory_id} style={rowStyle(item, idx)}>
-                        <td style={tdS}>{item.sku}</td>
                         <td style={tdS}>{item.name}</td>
                         <td style={tdS}>{item.current_stock}</td>
                         <td style={tdS}>{item.threshold}</td>

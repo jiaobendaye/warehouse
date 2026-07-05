@@ -3,16 +3,13 @@
 
 CREATE TABLE IF NOT EXISTS accessories (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    sku                 TEXT    NOT NULL UNIQUE,
-    name                TEXT    NOT NULL,
+    name                TEXT    NOT NULL UNIQUE,
     current_stock       INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 0,
     notes               TEXT    NOT NULL DEFAULT '',
     created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_accessories_sku ON accessories(sku);
 
 CREATE TABLE IF NOT EXISTS inventory_flow (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -26,8 +26,8 @@ export function GetAccessory(arg1, arg2) {
   return window['go']['desktop']['App']['GetAccessory'](arg1, arg2);
 }
 
-export function GetAccessoryBySKU(arg1, arg2) {
-  return window['go']['desktop']['App']['GetAccessoryBySKU'](arg1, arg2);
+export function GetAccessoryByName(arg1, arg2) {
+  return window['go']['desktop']['App']['GetAccessoryByName'](arg1, arg2);
 }
 
 export function GetFlow(arg1, arg2) {

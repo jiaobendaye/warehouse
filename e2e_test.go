@@ -185,7 +185,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 	// ── 2. Create accessory ─────────────────────────────────────────────
 	var created struct {
 		ID                int64  `json:"id"`
-		SKU               string `json:"sku"`
 		Name              string `json:"name"`
 		CurrentStock      int64  `json:"current_stock"`
 		LowStockThreshold int64  `json:"low_stock_threshold"`
@@ -195,7 +194,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 	}
 	func() {
 		body := map[string]any{
-			"sku":                 "E2E-CRUD-001",
 			"name":                "测试充电器",
 			"low_stock_threshold": 10,
 			"notes":               "e2e full CRUD test",
@@ -208,7 +206,7 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 			t.Fatalf("create: want 201, got %d: %s", resp.StatusCode, readBody(t, resp))
 		}
 		decodeBody(t, resp, &created)
-		if created.ID == 0 || created.SKU != "E2E-CRUD-001" || created.CurrentStock != 0 {
+		if created.ID == 0 || created.Name != "测试充电器" || created.CurrentStock != 0 {
 			t.Fatalf("create unexpected: %+v", created)
 		}
 	}()
@@ -216,7 +214,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 	// ── 3. Get accessory by id ──────────────────────────────────────────
 	var gotAcc struct {
 		ID                int64  `json:"id"`
-		SKU               string `json:"sku"`
 		Name              string `json:"name"`
 		CurrentStock      int64  `json:"current_stock"`
 		LowStockThreshold int64  `json:"low_stock_threshold"`
@@ -231,14 +228,14 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 			t.Fatalf("get: want 200, got %d: %s", resp.StatusCode, readBody(t, resp))
 		}
 		decodeBody(t, resp, &gotAcc)
-		if gotAcc.ID != created.ID || gotAcc.SKU != "E2E-CRUD-001" {
+		if gotAcc.ID != created.ID || gotAcc.Name != "测试充电器" {
 			t.Fatalf("get mismatch: %+v", gotAcc)
 		}
 	}()
 
 	// ── 4. Search accessories ───────────────────────────────────────────
 	func() {
-		resp, err := http.Get(baseURL + "/api/v1/accessories?q=E2E-CRUD-001")
+		resp, err := http.Get(baseURL + "/api/v1/accessories?q=测试充电器")
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -248,8 +245,8 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		}
 		var searchRes struct {
 			Items []struct {
-				ID  int64  `json:"id"`
-				SKU string `json:"sku"`
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
 			} `json:"items"`
 			Total int `json:"total"`
 		}
@@ -392,12 +389,12 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		}
 		var scanRes struct {
 			Items []struct {
-				AccessoryID      int64  `json:"accessory_id"`
-				SKU              string `json:"sku"`
-				CurrentStock     int64  `json:"current_stock"`
-				Threshold        int64  `json:"threshold"`
-				Shortage         int64  `json:"shortage"`
-				SuggestedQuantity int64 `json:"suggested_quantity"`
+				AccessoryID       int64  `json:"accessory_id"`
+				Name              string `json:"name"`
+				CurrentStock      int64  `json:"current_stock"`
+				Threshold         int64  `json:"threshold"`
+				Shortage          int64  `json:"shortage"`
+				SuggestedQuantity int64  `json:"suggested_quantity"`
 			} `json:"items"`
 		}
 		decodeBody(t, resp, &scanRes)
@@ -421,7 +418,7 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 	// ── 10. Replenishment check ─────────────────────────────────────────
 	func() {
 		body := map[string]any{
-			"skus":   []string{"E2E-CRUD-001", "NONEXISTENT-SKU"},
+			"names":  []string{"Updated充电器", "NONEXISTENT-NAME"},
 			"policy": "default",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/replenishment/check", jsonBody(t, body))
@@ -439,12 +436,12 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		if len(checkRes.Items) != 1 {
 			t.Fatalf("check items: expected 1, got %d: %+v", len(checkRes.Items), checkRes)
 		}
-		sku, _ := checkRes.Items[0]["sku"].(string)
-		if sku != "E2E-CRUD-001" {
-			t.Fatalf("check item sku: want E2E-CRUD-001, got %q", sku)
+		name, _ := checkRes.Items[0]["name"].(string)
+		if name != "Updated充电器" {
+			t.Fatalf("check item name: want Updated充电器, got %q", name)
 		}
-		if len(checkRes.NotFound) != 1 || checkRes.NotFound[0] != "NONEXISTENT-SKU" {
-			t.Fatalf("check not_found: expected [NONEXISTENT-SKU], got %v", checkRes.NotFound)
+		if len(checkRes.NotFound) != 1 || checkRes.NotFound[0] != "NONEXISTENT-NAME" {
+			t.Fatalf("check not_found: expected [NONEXISTENT-NAME], got %v", checkRes.NotFound)
 		}
 	}()
 
@@ -453,7 +450,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 	var deleteID int64
 	func() {
 		body := map[string]any{
-			"sku":  "E2E-DEL-ONLY",
 			"name": "delete-only",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
@@ -507,11 +503,10 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 
 	// ── Create an accessory for error-path tests ─────────────────────────
 	var accID int64
-	accSKU := "E2E-ERR-001"
+	accName := "E2E-ERR-001"
 	func() {
 		body := map[string]any{
-			"sku":  accSKU,
-			"name": "error-test",
+			"name":                accName,
 			"low_stock_threshold": 5,
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
@@ -528,23 +523,22 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 		accID = out.ID
 	}()
 
-	// ── Duplicate SKU → 409 CONFLICT ────────────────────────────────────
-	t.Run("duplicate_sku", func(t *testing.T) {
+	// ── Duplicate name → 409 CONFLICT ────────────────────────────────────
+	t.Run("duplicate_name", func(t *testing.T) {
 		body := map[string]any{
-			"sku":  accSKU,
-			"name": "duplicate",
+			"name": accName,
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
 		req.Header.Set("Content-Type", "application/json")
 		resp := httpDo(t, req)
 		defer resp.Body.Close()
 		if resp.StatusCode != 409 {
-			t.Fatalf("duplicate sku: want 409, got %d: %s", resp.StatusCode, readBody(t, resp))
+			t.Fatalf("duplicate name: want 409, got %d: %s", resp.StatusCode, readBody(t, resp))
 		}
 		var eb errorBody
 		decodeBody(t, resp, &eb)
 		if eb.Err == nil || eb.Err.Code != "CONFLICT" {
-			t.Fatalf("duplicate sku: want code=CONFLICT, got %+v", eb)
+			t.Fatalf("duplicate name: want code=CONFLICT, got %+v", eb)
 		}
 	})
 
@@ -588,7 +582,7 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 	// ── Invalid input → 400 BAD_REQUEST ─────────────────────────────────
 	t.Run("invalid_input", func(t *testing.T) {
 		body := map[string]any{
-			// Missing required "sku", "name"
+			// Missing required "name"
 			"notes": "incomplete",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
@@ -655,8 +649,12 @@ func TestE2E_MCPViaHTTP(t *testing.T) {
 	t.Logf("MCP via HTTP: roundtrip OK")
 }
 
-func min(a, b int) int { if a < b { return a }; return b }
-
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 func TestE2E_ClientRef_Idempotency(t *testing.T) {
 	if testing.Short() {
@@ -670,7 +668,6 @@ func TestE2E_ClientRef_Idempotency(t *testing.T) {
 	var accID int64
 	func() {
 		body := map[string]any{
-			"sku":  "E2E-IDM-001",
 			"name": "idempotency-test",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))

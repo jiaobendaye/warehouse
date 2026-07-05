@@ -17,7 +17,7 @@ export function DeleteAccessory(arg1:context.Context,arg2:number):Promise<void>;
 
 export function GetAccessory(arg1:context.Context,arg2:number):Promise<domain.Accessory>;
 
-export function GetAccessoryBySKU(arg1:context.Context,arg2:string):Promise<domain.Accessory>;
+export function GetAccessoryByName(arg1:context.Context,arg2:string):Promise<domain.Accessory>;
 
 export function GetFlow(arg1:context.Context,arg2:number):Promise<domain.InventoryFlow>;
 

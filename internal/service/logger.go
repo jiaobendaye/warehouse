@@ -14,7 +14,7 @@ var oplog = log.Default()
 //
 // Example:
 //
-//	logOp("stock", "inbound", "accessory_id", 42, "sku", "SKU-1", "qty", 10, "balance_after", 100, "client_ref", "abc")
+//	logOp("stock", "inbound", "accessory_id", 42, "name", "充电器", "qty", 10, "balance_after", 100, "client_ref", "abc")
 func logOp(component, op string, kv ...any) {
 	msg := fmt.Sprintf("[%s] %s", component, op)
 	for i := 0; i+1 < len(kv); i += 2 {

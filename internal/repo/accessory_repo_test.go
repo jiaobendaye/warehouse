@@ -21,16 +21,15 @@ func newTestDB(t *testing.T) (*sql.DB, func()) {
 	return d, func() { _ = d.Close() }
 }
 
-// TestAccessoryRepo_CreateAndGetBySKU verifies a fresh accessory can be
-// inserted and retrieved by SKU.
-func TestAccessoryRepo_CreateAndGetBySKU(t *testing.T) {
+// TestAccessoryRepo_CreateAndGetByName verifies a fresh accessory can be
+// inserted and retrieved by name.
+func TestAccessoryRepo_CreateAndGetByName(t *testing.T) {
 	d, cleanup := newTestDB(t)
 	defer cleanup()
 	r := repo.NewAccessoryRepo(d)
 
 	ctx := context.Background()
 	in := domain.Accessory{
-		SKU:               "SKU-1",
 		Name:              "透明保护壳",
 		LowStockThreshold: 5,
 		Notes:             "iPhone 15 适用",
@@ -49,32 +48,32 @@ func TestAccessoryRepo_CreateAndGetBySKU(t *testing.T) {
 		t.Fatal("expected non-empty CreatedAt")
 	}
 
-	bySKU, err := r.GetBySKU(ctx, "SKU-1")
+	byName, err := r.GetByName(ctx, "透明保护壳")
 	if err != nil {
-		t.Fatalf("GetBySKU: %v", err)
+		t.Fatalf("GetByName: %v", err)
 	}
-	if bySKU.Name != "透明保护壳" {
-		t.Fatalf("expected name '透明保护壳', got %q", bySKU.Name)
+	if byName.Name != "透明保护壳" {
+		t.Fatalf("expected name '透明保护壳', got %q", byName.Name)
 	}
-	if bySKU.ID != got.ID {
-		t.Fatalf("ID mismatch: %d vs %d", bySKU.ID, got.ID)
+	if byName.ID != got.ID {
+		t.Fatalf("ID mismatch: %d vs %d", byName.ID, got.ID)
 	}
 }
 
-// TestAccessoryRepo_CreateDuplicateSKU verifies a second insert with the
-// same SKU is rejected.
-func TestAccessoryRepo_CreateDuplicateSKU(t *testing.T) {
+// TestAccessoryRepo_CreateDuplicateName verifies a second insert with the
+// same name is rejected.
+func TestAccessoryRepo_CreateDuplicateName(t *testing.T) {
 	d, cleanup := newTestDB(t)
 	defer cleanup()
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
 
-	if _, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "a"}); err != nil {
+	if _, err := r.Create(ctx, domain.Accessory{Name: "DUP"}); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	_, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "b"})
+	_, err := r.Create(ctx, domain.Accessory{Name: "DUP"})
 	if err == nil {
-		t.Fatal("expected duplicate-SKU error, got nil")
+		t.Fatal("expected duplicate-name error, got nil")
 	}
 }
 
@@ -97,9 +96,9 @@ func TestAccessoryRepo_ListAndSearch(t *testing.T) {
 	ctx := context.Background()
 
 	items := []domain.Accessory{
-		{SKU: "A-1", Name: "保护壳 iPhone"},
-		{SKU: "A-2", Name: "贴膜 iPhone"},
-		{SKU: "B-1", Name: "数据线"},
+		{Name: "保护壳 iPhone"},
+		{Name: "贴膜 iPhone"},
+		{Name: "数据线"},
 	}
 	for _, a := range items {
 		if _, err := r.Create(ctx, a); err != nil {
@@ -130,14 +129,14 @@ func TestAccessoryRepo_ListAndSearch(t *testing.T) {
 	}
 }
 
-// TestAccessoryRepo_Update verifies partial update and rejection of SKU change.
+// TestAccessoryRepo_Update verifies partial update.
 func TestAccessoryRepo_Update(t *testing.T) {
 	d, cleanup := newTestDB(t)
 	defer cleanup()
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
 
-	created, err := r.Create(ctx, domain.Accessory{SKU: "U-1", Name: "原名", LowStockThreshold: 3})
+	created, err := r.Create(ctx, domain.Accessory{Name: "原名", LowStockThreshold: 3})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -156,8 +155,8 @@ func TestAccessoryRepo_Update(t *testing.T) {
 	if updated.LowStockThreshold != 10 {
 		t.Fatalf("expected threshold 10, got %d", updated.LowStockThreshold)
 	}
-	if updated.SKU != "U-1" {
-		t.Fatalf("SKU should not change, got %q", updated.SKU)
+	if updated.ID != created.ID {
+		t.Fatalf("ID should not change, got %d", updated.ID)
 	}
 }
 
@@ -167,7 +166,7 @@ func TestAccessoryRepo_Delete(t *testing.T) {
 	defer cleanup()
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
-	created, err := r.Create(ctx, domain.Accessory{SKU: "DEL", Name: "x"})
+	created, err := r.Create(ctx, domain.Accessory{Name: "del-name"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -179,5 +178,5 @@ func TestAccessoryRepo_Delete(t *testing.T) {
 	}
 }
 
-func ptr(s string) *string { return &s }
-func ptrInt64(n int64) *int64 { return &n }
+func ptr(s string) *string        { return &s }
+func ptrInt64(n int64) *int64     { return &n }

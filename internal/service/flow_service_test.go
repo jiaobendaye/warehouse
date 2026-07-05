@@ -29,7 +29,7 @@ func newFlowSvc(t *testing.T) (*service.FlowService, *repo.FlowRepo, int64, func
 	flow := repo.NewFlowRepo(d)
 
 	created, err := acc.Create(context.Background(), domain.Accessory{
-		SKU: "FS-1", Name: "测试配件",
+		Name: "测试配件",
 	})
 	if err != nil {
 		cleanup()

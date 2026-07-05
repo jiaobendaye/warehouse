@@ -23,19 +23,19 @@ func newStockSvc(t *testing.T) (*service.StockService, *repo.AccessoryRepo, *rep
 	return svc, acc, flow, d, dbCleanup
 }
 
-func seedAccessoryWithStock(t *testing.T, acc *repo.AccessoryRepo, sku string, stock int64) domain.Accessory {
+func seedAccessoryWithStock(t *testing.T, acc *repo.AccessoryRepo, name string, stock int64) domain.Accessory {
 	t.Helper()
 	a, err := acc.Create(context.Background(), domain.Accessory{
-		SKU: sku, Name: sku,
+		Name: name,
 	})
 	if err != nil {
-		t.Fatalf("seed create %s: %v", sku, err)
+		t.Fatalf("seed create %s: %v", name, err)
 	}
 	if stock != 0 {
 		// SetStock with nil tx writes via the underlying *sql.DB. Test-only
 		// scaffolding; production code goes through service transactions.
 		if err := acc.SetStock(context.Background(), nil, a.ID, stock); err != nil {
-			t.Fatalf("seed set stock %s: %v", sku, err)
+			t.Fatalf("seed set stock %s: %v", name, err)
 		}
 	}
 	return a
@@ -559,8 +559,8 @@ func TestStockService_BatchInbound_NotFoundRow_RollsBack(t *testing.T) {
 	}
 }
 
-func TestStockService_BatchInbound_DuplicateSKU_Rejected(t *testing.T) {
-	// Spec rule: duplicate SKU within a batch is a 400 with failing index.
+func TestStockService_BatchInbound_DuplicateAccessoryID_Rejected(t *testing.T) {
+	// Spec rule: duplicate accessory_id within a batch is a 400 with failing index.
 	svc, acc, fr, _, cleanup := newStockSvc(t)
 	defer cleanup()
 	ctx := context.Background()

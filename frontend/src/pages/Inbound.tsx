@@ -140,7 +140,7 @@ export default function Inbound() {
             <select style={inp} value={sAccId} onChange={e => setSAccId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">-- 请选择 --</option>
               {accessories.map(a => (
-                <option key={a.id} value={a.id}>{a.sku} - {a.name}</option>
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </Field>
@@ -182,7 +182,7 @@ export default function Inbound() {
                     <select style={{ ...inp, width: 200 }} value={r.accessory_id} onChange={e => updateRow(r.key, { accessory_id: e.target.value ? Number(e.target.value) : '' })}>
                       <option value="">-- 请选择 --</option>
                       {accessories.map(a => (
-                        <option key={a.id} value={a.id}>{a.sku} - {a.name}</option>
+                        <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
                   </td>

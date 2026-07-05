@@ -4,9 +4,9 @@
 // every transport.
 //
 // AccessoryService is the canonical home for accessory-catalog rules:
-// SKU uniqueness, immutable SKU on update, threshold non-negative, and
-// refuse-delete-when-flows-exist. It translates persistence errors into
-// typed sentinels so transport layers can map them to HTTP/MCP status codes.
+// name uniqueness, threshold non-negative, and refuse-delete-when-flows-exist.
+// It translates persistence errors into typed sentinels so transport layers
+// can map them to HTTP/MCP status codes.
 package service
 
 import (
@@ -23,18 +23,18 @@ import (
 // should map these to status codes:
 //
 //	ErrInvalidInput  → 400 Bad Request
-//	ErrSKUConflict   → 409 Conflict
+//	ErrNameConflict  → 409 Conflict
 //	ErrNotFound      → 404 Not Found
 //	ErrHasFlow       → 409 Conflict
 var (
 	ErrInvalidInput = errors.New("service: invalid input")
-	ErrSKUConflict  = errors.New("service: sku already exists")
+	ErrNameConflict = errors.New("service: name already exists")
 	ErrNotFound     = errors.New("service: not found")
 	ErrHasFlow      = errors.New("service: accessory has inventory flows; delete refused")
 )
 
 // AccessoryService is the business-logic entry point for the accessory
-// catalog. It owns validation, SKU immutability, and delete-with-flow
+// catalog. It owns validation, name uniqueness, and delete-with-flow
 // protection; it never touches the database directly.
 type AccessoryService struct {
 	acc  *repo.AccessoryRepo
@@ -51,24 +51,24 @@ func NewAccessoryService(acc *repo.AccessoryRepo, flow *repo.FlowRepo) *Accessor
 	return &AccessoryService{acc: acc, flow: flow}
 }
 
-// Create validates the input and inserts a new accessory. A duplicate SKU
-// surfaces as ErrSKUConflict; any other persistence failure is wrapped.
+// Create validates the input and inserts a new accessory. A duplicate name
+// surfaces as ErrNameConflict; any other persistence failure is wrapped.
 func (s *AccessoryService) Create(ctx context.Context, in domain.Accessory) (domain.Accessory, error) {
 	if err := in.Validate(); err != nil {
 		return domain.Accessory{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
 	}
 	// Probe the unique index up-front so we can produce a typed conflict
 	// error instead of leaking the underlying UNIQUE-constraint string.
-	if _, err := s.acc.GetBySKU(ctx, in.SKU); err == nil {
-		return domain.Accessory{}, fmt.Errorf("%w: sku %q already exists", ErrSKUConflict, in.SKU)
+	if _, err := s.acc.GetByName(ctx, in.Name); err == nil {
+		return domain.Accessory{}, fmt.Errorf("%w: name %q already exists", ErrNameConflict, in.Name)
 	} else if !errors.Is(err, repo.ErrNotFound) {
-		return domain.Accessory{}, fmt.Errorf("check sku: %w", err)
+		return domain.Accessory{}, fmt.Errorf("check name: %w", err)
 	}
 	out, err := s.acc.Create(ctx, in)
 	if err != nil {
 		return domain.Accessory{}, fmt.Errorf("create accessory: %w", err)
 	}
-	logOp("accessory", "create", "sku", out.SKU, "id", out.ID, "name", out.Name, "threshold", out.LowStockThreshold)
+	logOp("accessory", "create", "id", out.ID, "name", out.Name, "threshold", out.LowStockThreshold)
 	return out, nil
 }
 
@@ -85,22 +85,22 @@ func (s *AccessoryService) Get(ctx context.Context, id int64) (domain.Accessory,
 	return a, nil
 }
 
-// GetBySKU returns the accessory by its unique SKU, translating
+// GetByName returns the accessory by its unique name, translating
 // repo.ErrNotFound to service.ErrNotFound.
-func (s *AccessoryService) GetBySKU(ctx context.Context, sku string) (domain.Accessory, error) {
-	a, err := s.acc.GetBySKU(ctx, sku)
+func (s *AccessoryService) GetByName(ctx context.Context, name string) (domain.Accessory, error) {
+	a, err := s.acc.GetByName(ctx, name)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			return domain.Accessory{}, ErrNotFound
 		}
-		return domain.Accessory{}, fmt.Errorf("get accessory by sku: %w", err)
+		return domain.Accessory{}, fmt.Errorf("get accessory by name: %w", err)
 	}
 	return a, nil
 }
 
-// List returns accessories matching q (case-insensitive substring on
-// sku/name) with limit/offset pagination, plus the total count under the
-// same filter. q may be empty for an unfiltered list.
+// List returns accessories matching q (case-insensitive substring on name)
+// with limit/offset pagination, plus the total count under the same filter.
+// q may be empty for an unfiltered list.
 func (s *AccessoryService) List(ctx context.Context, q string, limit, offset int) ([]domain.Accessory, int, error) {
 	rows, total, err := s.acc.List(ctx, q, limit, offset)
 	if err != nil {
@@ -109,9 +109,7 @@ func (s *AccessoryService) List(ctx context.Context, q string, limit, offset int
 	return rows, total, nil
 }
 
-// Update applies a partial update. SKU is intentionally not writable; the
-// AccessoryUpdate type has no SKU field, so this layer never needs to
-// reject one — the type system enforces the contract. The threshold, when
+// Update applies a partial update. Name is mutable. The threshold, when
 // provided, must be non-negative.
 func (s *AccessoryService) Update(ctx context.Context, id int64, u domain.AccessoryUpdate) (domain.Accessory, error) {
 	if u.LowStockThreshold != nil && *u.LowStockThreshold < 0 {
@@ -124,7 +122,7 @@ func (s *AccessoryService) Update(ctx context.Context, id int64, u domain.Access
 		}
 		return domain.Accessory{}, fmt.Errorf("update accessory: %w", err)
 	}
-	logOp("accessory", "update", "sku", out.SKU, "id", out.ID, "name", out.Name)
+	logOp("accessory", "update", "id", out.ID, "name", out.Name)
 	return out, nil
 }
 

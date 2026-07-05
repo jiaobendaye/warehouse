@@ -19,7 +19,7 @@ import (
 
 // accessoryListInput is the JSON shape for accessory.list.
 type accessoryListInput struct {
-	Q      string `json:"q,omitempty"      jsonschema:"search query (substring match on sku/name)"`
+	Q      string `json:"q,omitempty"      jsonschema:"search query (substring match on name)"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"page size; 0 means default"`
 	Offset int    `json:"offset,omitempty" jsonschema:"page offset"`
 }
@@ -30,16 +30,15 @@ type accessoryListOutput struct {
 	Total int                `json:"total"`
 }
 
-// accessoryGetInput — exactly one of id or sku must be set.
+// accessoryGetInput — exactly one of id or name must be set.
 type accessoryGetInput struct {
-	ID  *int64  `json:"id,omitempty"  jsonschema:"accessory id (mutually exclusive with sku)"`
-	SKU *string `json:"sku,omitempty" jsonschema:"accessory sku (mutually exclusive with id)"`
+	ID   *int64  `json:"id,omitempty"   jsonschema:"accessory id (mutually exclusive with name)"`
+	Name *string `json:"name,omitempty" jsonschema:"accessory name (mutually exclusive with id)"`
 }
 
 // accessoryCreateInput — required fields per domain.Accessory.Validate.
 type accessoryCreateInput struct {
-	SKU               string `json:"sku"                 jsonschema:"unique sku"`
-	Name              string `json:"name"                jsonschema:"display name"`
+	Name              string `json:"name"                jsonschema:"unique display name"`
 	LowStockThreshold int64  `json:"low_stock_threshold" jsonschema:"threshold for replenishment alerts (0 disables)"`
 	Notes             string `json:"notes,omitempty"     jsonschema:"free-form notes"`
 }
@@ -74,15 +73,15 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "accessory.get", Description: "Get one accessory by id or sku (exactly one required).",
+		Name: "accessory.get", Description: "Get one accessory by id or name (exactly one required).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryGetInput) (*mcpsdk.CallToolResult, domain.Accessory, error) {
 		hasID := in.ID != nil
-		hasSKU := in.SKU != nil
-		if hasID == hasSKU {
+		hasName := in.Name != nil
+		if hasID == hasName {
 			// both or neither → JSON-RPC -32602 invalid params.
 			return nil, domain.Accessory{}, &jsonrpc.Error{
 				Code:    CodeInvalidParams,
-				Message: "accessory.get requires exactly one of id or sku",
+				Message: "accessory.get requires exactly one of id or name",
 			}
 		}
 		var (
@@ -92,7 +91,7 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 		if hasID {
 			acc, err = svc.Get(ctx, *in.ID)
 		} else {
-			acc, err = svc.GetBySKU(ctx, *in.SKU)
+			acc, err = svc.GetByName(ctx, *in.Name)
 		}
 		if err != nil {
 			return nil, domain.Accessory{}, rpcError(err)
@@ -101,10 +100,9 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "accessory.create", Description: "Create a new accessory. SKU must be unique.",
+		Name: "accessory.create", Description: "Create a new accessory. Name must be unique.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryCreateInput) (*mcpsdk.CallToolResult, domain.Accessory, error) {
 		acc, err := svc.Create(ctx, domain.Accessory{
-			SKU:               in.SKU,
 			Name:              in.Name,
 			LowStockThreshold: in.LowStockThreshold,
 			Notes:             in.Notes,
@@ -116,7 +114,7 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "accessory.update", Description: "Update an accessory. SKU is immutable; all other fields are partial-update.",
+		Name: "accessory.update", Description: "Update an accessory. All fields are partial-update.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryUpdateInput) (*mcpsdk.CallToolResult, domain.Accessory, error) {
 		upd := domain.AccessoryUpdate{
 			Name:              in.Name,

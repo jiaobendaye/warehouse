@@ -50,7 +50,7 @@ func TranslateError(err error) (int, string) {
 	case errors.Is(err, service.ErrNotFound),
 		errors.Is(err, repo.ErrNotFound):
 		return http.StatusNotFound, "NOT_FOUND"
-	case errors.Is(err, service.ErrSKUConflict):
+	case errors.Is(err, service.ErrNameConflict):
 		return http.StatusConflict, "CONFLICT"
 	case errors.Is(err, service.ErrHasFlow):
 		return http.StatusConflict, "CONFLICT"

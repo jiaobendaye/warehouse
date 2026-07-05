@@ -22,13 +22,13 @@ type AccessoryRepo struct {
 // NewAccessoryRepo wires the repo to an open *sql.DB.
 func NewAccessoryRepo(d *sql.DB) *AccessoryRepo { return &AccessoryRepo{db: d} }
 
-// Create inserts a new accessory. SKU is enforced unique by the schema; a
-// conflict surfaces as the underlying SQLite UNIQUE error.
+// Create inserts a new accessory. Name uniqueness is enforced by the
+// schema; a conflict surfaces as the underlying SQLite UNIQUE error.
 func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain.Accessory, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO accessories(sku, name, current_stock, low_stock_threshold, notes)
-		 VALUES (?, ?, 0, ?, ?)`,
-		in.SKU, in.Name, in.LowStockThreshold, in.Notes,
+		`INSERT INTO accessories(name, current_stock, low_stock_threshold, notes)
+		 VALUES (?, 0, ?, ?)`,
+		in.Name, in.LowStockThreshold, in.Notes,
 	)
 	if err != nil {
 		return domain.Accessory{}, fmt.Errorf("insert accessory: %w", err)
@@ -43,20 +43,20 @@ func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain
 // Get loads an accessory by primary key.
 func (r *AccessoryRepo) Get(ctx context.Context, id int64) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+		`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 		 FROM accessories WHERE id = ?`, id)
 	return scanAccessory(row)
 }
 
-// GetBySKU loads an accessory by its unique SKU.
-func (r *AccessoryRepo) GetBySKU(ctx context.Context, sku string) (domain.Accessory, error) {
+// GetByName loads an accessory by its unique name.
+func (r *AccessoryRepo) GetByName(ctx context.Context, name string) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
-		 FROM accessories WHERE sku = ?`, sku)
+		`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+		 FROM accessories WHERE name = ?`, name)
 	return scanAccessory(row)
 }
 
-// List returns accessories whose SKU or NAME contains q (case-insensitive),
+// List returns accessories whose NAME contains q (case-insensitive),
 // paginated by limit/offset, plus the total count under the same filter.
 func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) ([]domain.Accessory, int, error) {
 	if limit <= 0 {
@@ -68,17 +68,17 @@ func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) (
 	)
 	if q == "" {
 		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+			`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 			 FROM accessories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 			limit, offset)
 	} else {
 		like := "%" + q + "%"
 		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+			`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 			 FROM accessories
-			 WHERE sku LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE
+			 WHERE name LIKE ? COLLATE NOCASE
 			 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-			like, like, limit, offset)
+			like, limit, offset)
 	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("list query: %w", err)
@@ -106,16 +106,16 @@ func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) (
 		like := "%" + q + "%"
 		if err := r.db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM accessories
-			 WHERE sku LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE`,
-			like, like).Scan(&total); err != nil {
+			 WHERE name LIKE ? COLLATE NOCASE`,
+			like).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count filtered: %w", err)
 		}
 	}
 	return out, total, nil
 }
 
-// Update applies the provided partial update. SKU is intentionally not
-// writable. Updated_at is bumped via SQL CURRENT_TIMESTAMP.
+// Update applies the provided partial update. Updated_at is bumped via SQL
+// CURRENT_TIMESTAMP.
 func (r *AccessoryRepo) Update(ctx context.Context, id int64, u domain.AccessoryUpdate) (domain.Accessory, error) {
 	cur, err := r.Get(ctx, id)
 	if err != nil {
@@ -217,7 +217,7 @@ type rowScanner interface {
 func scanAccessory(s rowScanner) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := s.Scan(
-		&a.ID, &a.SKU, &a.Name, &a.CurrentStock,
+		&a.ID, &a.Name, &a.CurrentStock,
 		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
@@ -232,7 +232,7 @@ func scanAccessory(s rowScanner) (domain.Accessory, error) {
 func scanAccessoryRows(rows *sql.Rows) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := rows.Scan(
-		&a.ID, &a.SKU, &a.Name, &a.CurrentStock,
+		&a.ID, &a.Name, &a.CurrentStock,
 		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {

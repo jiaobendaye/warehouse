@@ -21,17 +21,16 @@ import (
 // SuggestedQuantity is the recommended replenishment quantity. Under the
 // default policy it equals Shortage; under fixed:N it equals N.
 type ReplenishmentItem struct {
-	AccessoryID      int64  `json:"accessory_id"`
-	SKU              string `json:"sku"`
-	Name             string `json:"name"`
-	CurrentStock     int64  `json:"current_stock"`
-	Threshold        int64  `json:"threshold"`
-	Shortage         int64  `json:"shortage"`
-	SuggestedQuantity int64 `json:"suggested_quantity"`
+	AccessoryID       int64  `json:"accessory_id"`
+	Name              string `json:"name"`
+	CurrentStock      int64  `json:"current_stock"`
+	Threshold         int64  `json:"threshold"`
+	Shortage          int64  `json:"shortage"`
+	SuggestedQuantity int64  `json:"suggested_quantity"`
 }
 
 // BatchCheckResult bundles Check's two outputs: the items that need
-// replenishment and any SKUs the caller asked about that don't exist.
+// replenishment and any names the caller asked about that don't exist.
 type BatchCheckResult struct {
 	Items    []ReplenishmentItem `json:"items"`
 	NotFound []string            `json:"not_found"`
@@ -45,14 +44,15 @@ type BatchCheckResult struct {
 //   - Scan(ctx) returns every accessory that is below its threshold
 //     (threshold > 0 AND current_stock < threshold), sorted by shortage
 //     descending.
-//   - Check(ctx, skus, policy) returns the subset of named SKUs that need
-//     replenishment, plus a NotFound list of any SKUs that don't exist.
+//   - Check(ctx, names, policy) returns the subset of named accessories
+//     that need replenishment, plus a NotFound list of any names that
+//     don't exist.
 //
 // Scaling note: Scan fetches the entire catalog via List(...) and filters
-// in-memory. For v1 with small catalogs (hundreds of SKUs) this is fine.
+// in-memory. For v1 with small catalogs (hundreds of items) this is fine.
 // Once the catalog grows into the tens of thousands, replace the filter
 // pass with a SQL query that emits shortage directly:
-//     SELECT id, sku, name, current_stock, low_stock_threshold,
+//     SELECT id, name, current_stock, low_stock_threshold,
 //            (low_stock_threshold - current_stock) AS shortage
 //     FROM accessories
 //     WHERE low_stock_threshold > 0 AND current_stock < low_stock_threshold
@@ -100,15 +100,15 @@ func (s *ReplenishmentService) Scan(ctx context.Context) ([]ReplenishmentItem, e
 	return out, nil
 }
 
-// Check inspects the listed SKUs and returns those that need replenishment,
-// plus any SKUs the catalog doesn't know about. policy may be:
+// Check inspects the listed names and returns those that need replenishment,
+// plus any names the catalog doesn't know about. policy may be:
 //   - "" or "default": suggested = shortage.
 //   - "fixed:<N>":     suggested = N (N must be a positive int64).
 //   - anything else:   ErrInvalidInput.
 //
 // Threshold-zero accessories are filtered out for the same reason as Scan:
 // they're not considered to need replenishment at all.
-func (s *ReplenishmentService) Check(ctx context.Context, skus []string, policy string) (BatchCheckResult, error) {
+func (s *ReplenishmentService) Check(ctx context.Context, names []string, policy string) (BatchCheckResult, error) {
 	suggested, err := parsePolicy(policy)
 	if err != nil {
 		return BatchCheckResult{}, err
@@ -118,19 +118,19 @@ func (s *ReplenishmentService) Check(ctx context.Context, skus []string, policy 
 		Items:    make([]ReplenishmentItem, 0),
 		NotFound: make([]string, 0),
 	}
-	for _, sku := range skus {
-		// Skip blank SKU entries silently — they're a no-op and don't
+	for _, name := range names {
+		// Skip blank name entries silently — they're a no-op and don't
 		// deserve a NotFound flag (the caller may have generated them).
-		if strings.TrimSpace(sku) == "" {
+		if strings.TrimSpace(name) == "" {
 			continue
 		}
-		a, err := s.acc.GetBySKU(ctx, sku)
+		a, err := s.acc.GetByName(ctx, name)
 		if err != nil {
 			if errors.Is(err, repo.ErrNotFound) {
-				res.NotFound = append(res.NotFound, sku)
+				res.NotFound = append(res.NotFound, name)
 				continue
 			}
-			return BatchCheckResult{}, fmt.Errorf("check sku %q: %w", sku, err)
+			return BatchCheckResult{}, fmt.Errorf("check name %q: %w", name, err)
 		}
 		if !isShortage(a) {
 			continue
@@ -157,7 +157,6 @@ func isShortage(a domain.Accessory) bool {
 func buildItem(a domain.Accessory, suggested int64) ReplenishmentItem {
 	return ReplenishmentItem{
 		AccessoryID:       a.ID,
-		SKU:               a.SKU,
 		Name:              a.Name,
 		CurrentStock:      a.CurrentStock,
 		Threshold:         a.LowStockThreshold,

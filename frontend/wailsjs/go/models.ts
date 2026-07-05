@@ -25,7 +25,6 @@ export namespace domain {
 	
 	export class Accessory {
 	    id: number;
-	    sku: string;
 	    name: string;
 	    current_stock: number;
 	    low_stock_threshold: number;
@@ -40,7 +39,6 @@ export namespace domain {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.sku = source["sku"];
 	        this.name = source["name"];
 	        this.current_stock = source["current_stock"];
 	        this.low_stock_threshold = source["low_stock_threshold"];
@@ -104,7 +102,6 @@ export namespace service {
 	
 	export class ReplenishmentItem {
 	    accessory_id: number;
-	    sku: string;
 	    name: string;
 	    current_stock: number;
 	    threshold: number;
@@ -118,7 +115,6 @@ export namespace service {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.accessory_id = source["accessory_id"];
-	        this.sku = source["sku"];
 	        this.name = source["name"];
 	        this.current_stock = source["current_stock"];
 	        this.threshold = source["threshold"];

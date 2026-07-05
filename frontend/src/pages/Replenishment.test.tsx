@@ -14,7 +14,6 @@ const mockScanResult = {
   items: [
     {
       accessory_id: 1,
-      sku: 'SKU-SCAN-001',
       name: '告急配件',
       current_stock: 5,
       threshold: 20,
@@ -23,7 +22,6 @@ const mockScanResult = {
     },
     {
       accessory_id: 2,
-      sku: 'SKU-SCAN-002',
       name: '充足配件',
       current_stock: 30,
       threshold: 10,
@@ -60,16 +58,14 @@ describe('Replenishment', () => {
     fireEvent.click(screen.getByText('扫描告急'));
 
     await waitFor(() => {
-      expect(screen.getByText('SKU-SCAN-001')).toBeInTheDocument();
+      expect(screen.getByText('告急配件')).toBeInTheDocument();
     });
 
     // First item: shortage > 0
-    expect(screen.getByText('告急配件')).toBeInTheDocument();
     expect(screen.getByText('缺 15')).toBeInTheDocument();
     expect(screen.getByText('15')).toBeInTheDocument(); // suggested_quantity
 
     // Second item: sufficient (should also be rendered)
-    expect(screen.getByText('SKU-SCAN-002')).toBeInTheDocument();
     expect(screen.getByText('充足配件')).toBeInTheDocument();
   });
 });

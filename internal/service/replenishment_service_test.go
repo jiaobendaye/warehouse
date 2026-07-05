@@ -34,25 +34,24 @@ func newReplSvc(t *testing.T) (*service.ReplenishmentService, *repo.AccessoryRep
 // seedAccessory creates an accessory with the given parameters. If
 // initialStock >= 0 it sets current_stock via the repo's SQL primitives
 // (since Create always starts stock at 0). It returns the loaded row.
-func seedAccessory(t *testing.T, r *repo.AccessoryRepo, sku, name string, threshold, initialStock int64) domain.Accessory {
+func seedAccessory(t *testing.T, r *repo.AccessoryRepo, name string, threshold, initialStock int64) domain.Accessory {
 	t.Helper()
 	ctx := context.Background()
 	created, err := r.Create(ctx, domain.Accessory{
-		SKU:               sku,
 		Name:              name,
 		LowStockThreshold: threshold,
 	})
 	if err != nil {
-		t.Fatalf("seed Create %s: %v", sku, err)
+		t.Fatalf("seed Create %s: %v", name, err)
 	}
 	if initialStock > 0 {
 		if err := r.SetStock(ctx, nil, created.ID, initialStock); err != nil {
-			t.Fatalf("seed SetStock %s: %v", sku, err)
+			t.Fatalf("seed SetStock %s: %v", name, err)
 		}
 		// Re-read so callers see the up-to-date row.
 		fresh, err := r.Get(ctx, created.ID)
 		if err != nil {
-			t.Fatalf("seed Get %s: %v", sku, err)
+			t.Fatalf("seed Get %s: %v", name, err)
 		}
 		return fresh
 	}
@@ -70,11 +69,11 @@ func TestReplenishmentService_Scan_FindsShortageItems(t *testing.T) {
 	ctx := context.Background()
 
 	// 1) overstocked: 100 >= 10
-	over := seedAccessory(t, acc, "OVER", "Over", 10, 100)
+	over := seedAccessory(t, acc, "Over", 10, 100)
 	// 2) just at threshold: 5 >= 5 -> not short
-	ok := seedAccessory(t, acc, "OK", "OK", 5, 5)
+	ok := seedAccessory(t, acc, "OK", 5, 5)
 	// 3) short: 2 < 10 -> shortage=8
-	short := seedAccessory(t, acc, "SHORT", "Short", 10, 2)
+	short := seedAccessory(t, acc, "Short", 10, 2)
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -84,14 +83,11 @@ func TestReplenishmentService_Scan_FindsShortageItems(t *testing.T) {
 		t.Fatalf("expected 1 shortage item, got %d: %+v", len(items), items)
 	}
 	got := items[0]
-	if got.SKU != short.SKU {
-		t.Fatalf("expected SKU %q, got %q", short.SKU, got.SKU)
+	if got.Name != short.Name {
+		t.Fatalf("expected Name %q, got %q", short.Name, got.Name)
 	}
 	if got.AccessoryID != short.ID {
 		t.Fatalf("expected AccessoryID %d, got %d", short.ID, got.AccessoryID)
-	}
-	if got.Name != short.Name {
-		t.Fatalf("expected Name %q, got %q", short.Name, got.Name)
 	}
 	if got.CurrentStock != 2 {
 		t.Fatalf("expected CurrentStock 2, got %d", got.CurrentStock)
@@ -106,10 +102,10 @@ func TestReplenishmentService_Scan_FindsShortageItems(t *testing.T) {
 		t.Fatalf("expected SuggestedQuantity 8, got %d", got.SuggestedQuantity)
 	}
 	// sanity: ensure the other two are not present
-	for _, sku := range []string{over.SKU, ok.SKU} {
+	for _, name := range []string{over.Name, ok.Name} {
 		for _, it := range items {
-			if it.SKU == sku {
-				t.Fatalf("unexpected SKU %q in scan result", sku)
+			if it.Name == name {
+				t.Fatalf("unexpected name %q in scan result", name)
 			}
 		}
 	}
@@ -123,9 +119,9 @@ func TestReplenishmentService_Scan_SortsByShortageDesc(t *testing.T) {
 	ctx := context.Background()
 
 	// Create in a non-shortage order to ensure sorting is real, not insertion order.
-	_ = seedAccessory(t, acc, "S2", "SmallShortage", 5, 4)  // shortage=1
-	_ = seedAccessory(t, acc, "S1", "MediumShortage", 50, 10) // shortage=40
-	_ = seedAccessory(t, acc, "S3", "BigShortage", 100, 1)   // shortage=99
+	_ = seedAccessory(t, acc, "SmallShortage", 5, 4)       // shortage=1
+	_ = seedAccessory(t, acc, "MediumShortage", 50, 10)   // shortage=40
+	_ = seedAccessory(t, acc, "BigShortage", 100, 1)      // shortage=99
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -156,23 +152,23 @@ func TestReplenishmentService_Scan_ExcludesThresholdZero(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	zeroThresh := seedAccessory(t, acc, "Z", "ZeroThreshold", 0, 0)
-	realShort := seedAccessory(t, acc, "R", "RealShort", 3, 1)
+	zeroThresh := seedAccessory(t, acc, "ZeroThreshold", 0, 0)
+	realShort := seedAccessory(t, acc, "RealShort", 3, 1)
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 	for _, it := range items {
-		if it.SKU == zeroThresh.SKU {
+		if it.Name == zeroThresh.Name {
 			t.Fatalf("accessory with threshold=0 must not appear, got %+v", it)
 		}
 	}
 	if len(items) != 1 {
 		t.Fatalf("expected exactly 1 item (real short), got %d", len(items))
 	}
-	if items[0].SKU != realShort.SKU {
-		t.Fatalf("expected SKU %q, got %q", realShort.SKU, items[0].SKU)
+	if items[0].Name != realShort.Name {
+		t.Fatalf("expected name %q, got %q", realShort.Name, items[0].Name)
 	}
 }
 
@@ -183,9 +179,9 @@ func TestReplenishmentService_Scan_NoShortage_ReturnsEmpty(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "A", "A", 5, 100)
-	_ = seedAccessory(t, acc, "B", "B", 1, 10)
-	_ = seedAccessory(t, acc, "C", "C", 3, 3) // exactly at threshold
+	_ = seedAccessory(t, acc, "A", 5, 100)
+	_ = seedAccessory(t, acc, "B", 1, 10)
+	_ = seedAccessory(t, acc, "C", 3, 3) // exactly at threshold
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -203,15 +199,15 @@ func TestReplenishmentService_Scan_NoShortage_ReturnsEmpty(t *testing.T) {
 // --- Check ---------------------------------------------------------------
 
 // TestReplenishmentService_Check_PartialShortage verifies Check returns only
-// the SKUs that need replenishment, leaving OK ones out.
+// the names that need replenishment, leaving OK ones out.
 func TestReplenishmentService_Check_PartialShortage(t *testing.T) {
 	svc, acc, cleanup := newReplSvc(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	shortA := seedAccessory(t, acc, "A", "A", 10, 2) // shortage=8
-	_ = seedAccessory(t, acc, "B", "B", 5, 100)      // OK
-	shortC := seedAccessory(t, acc, "C", "C", 4, 1)  // shortage=3
+	shortA := seedAccessory(t, acc, "A", 10, 2) // shortage=8
+	_ = seedAccessory(t, acc, "B", 5, 100)      // OK
+	shortC := seedAccessory(t, acc, "C", 4, 1)  // shortage=3
 
 	res, err := svc.Check(ctx, []string{"A", "B", "C"}, "")
 	if err != nil {
@@ -224,50 +220,50 @@ func TestReplenishmentService_Check_PartialShortage(t *testing.T) {
 		t.Fatalf("expected empty NotFound, got %v", res.NotFound)
 	}
 	// Default policy: suggested = shortage. Just check values are present.
-	skus := map[string]service.ReplenishmentItem{}
+	byName := map[string]service.ReplenishmentItem{}
 	for _, it := range res.Items {
-		skus[it.SKU] = it
+		byName[it.Name] = it
 	}
-	if it, ok := skus[shortA.SKU]; !ok {
-		t.Fatalf("missing SKU %q in result", shortA.SKU)
+	if it, ok := byName[shortA.Name]; !ok {
+		t.Fatalf("missing name %q in result", shortA.Name)
 	} else if it.Shortage != 8 || it.SuggestedQuantity != 8 {
 		t.Fatalf("A: want Shortage=8 Suggested=8, got %+v", it)
 	}
-	if it, ok := skus[shortC.SKU]; !ok {
-		t.Fatalf("missing SKU %q in result", shortC.SKU)
+	if it, ok := byName[shortC.Name]; !ok {
+		t.Fatalf("missing name %q in result", shortC.Name)
 	} else if it.Shortage != 3 || it.SuggestedQuantity != 3 {
 		t.Fatalf("C: want Shortage=3 Suggested=3, got %+v", it)
 	}
 }
 
-// TestReplenishmentService_Check_ReportsNotFound verifies an unknown SKU
+// TestReplenishmentService_Check_ReportsNotFound verifies an unknown name
 // accumulates into NotFound (and does not cause an error).
 func TestReplenishmentService_Check_ReportsNotFound(t *testing.T) {
 	svc, acc, cleanup := newReplSvc(t)
 	defer cleanup()
 	ctx := context.Background()
 
-	shortA := seedAccessory(t, acc, "A", "A", 10, 2)
-	_ = seedAccessory(t, acc, "B", "B", 5, 100)
+	shortA := seedAccessory(t, acc, "A", 10, 2)
+	_ = seedAccessory(t, acc, "B", 5, 100)
 
-	res, err := svc.Check(ctx, []string{"A", "NOT-A-SKU", "B", "GHOST"}, "")
+	res, err := svc.Check(ctx, []string{"A", "NOT-A-NAME", "B", "GHOST"}, "")
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 	if len(res.NotFound) != 2 {
-		t.Fatalf("expected 2 missing SKUs, got %v", res.NotFound)
+		t.Fatalf("expected 2 missing names, got %v", res.NotFound)
 	}
-	want := map[string]bool{"NOT-A-SKU": true, "GHOST": true}
-	for _, sku := range res.NotFound {
-		if !want[sku] {
-			t.Fatalf("unexpected SKU in NotFound: %q", sku)
+	want := map[string]bool{"NOT-A-NAME": true, "GHOST": true}
+	for _, name := range res.NotFound {
+		if !want[name] {
+			t.Fatalf("unexpected name in NotFound: %q", name)
 		}
 	}
 	if len(res.Items) != 1 {
 		t.Fatalf("expected 1 shortage item, got %d", len(res.Items))
 	}
-	if res.Items[0].SKU != shortA.SKU {
-		t.Fatalf("expected item SKU %q, got %q", shortA.SKU, res.Items[0].SKU)
+	if res.Items[0].Name != shortA.Name {
+		t.Fatalf("expected item name %q, got %q", shortA.Name, res.Items[0].Name)
 	}
 }
 
@@ -279,7 +275,7 @@ func TestReplenishmentService_Check_FixedPolicy_UsesFixedQuantity(t *testing.T) 
 	ctx := context.Background()
 
 	// Stock 2, threshold 10 -> shortage=8. But policy says fixed:50.
-	_ = seedAccessory(t, acc, "X", "X", 10, 2)
+	_ = seedAccessory(t, acc, "X", 10, 2)
 
 	res, err := svc.Check(ctx, []string{"X"}, "fixed:50")
 	if err != nil {
@@ -304,7 +300,7 @@ func TestReplenishmentService_Check_DefaultPolicy_UsesShortage(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "Y", "Y", 20, 5) // shortage=15
+	_ = seedAccessory(t, acc, "Y", 20, 5) // shortage=15
 
 	for _, policy := range []string{"", "default"} {
 		t.Run("policy="+policy, func(t *testing.T) {
@@ -334,7 +330,7 @@ func TestReplenishmentService_Check_InvalidPolicy_ReturnsErrInvalidInput(t *test
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "Z", "Z", 10, 2)
+	_ = seedAccessory(t, acc, "Z", 10, 2)
 
 	cases := []struct {
 		name   string
@@ -365,39 +361,39 @@ func TestReplenishmentService_Check_ThresholdZero_NotShortage(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	zeroThresh := seedAccessory(t, acc, "ZERO", "Zero", 0, 0)
+	zeroThresh := seedAccessory(t, acc, "Zero", 0, 0)
 	// zeroThresh already has stock=0; also seed a zero-threshold item
 	// with positive stock that should still not appear.
-	zeroThreshWithStock := seedAccessory(t, acc, "ZERO2", "Zero2", 0, 100)
+	zeroThreshWithStock := seedAccessory(t, acc, "Zero2", 0, 100)
 	// An actually-short row to confirm Check is functioning correctly.
-	real := seedAccessory(t, acc, "REAL", "Real", 5, 1)
+	real := seedAccessory(t, acc, "Real", 5, 1)
 
-	res, err := svc.Check(ctx, []string{zeroThresh.SKU, zeroThreshWithStock.SKU, real.SKU}, "")
+	res, err := svc.Check(ctx, []string{zeroThresh.Name, zeroThreshWithStock.Name, real.Name}, "")
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
 	if len(res.Items) != 1 {
-		t.Fatalf("expected 1 item (REAL), got %d: %+v", len(res.Items), res.Items)
+		t.Fatalf("expected 1 item (Real), got %d: %+v", len(res.Items), res.Items)
 	}
-	if res.Items[0].SKU != real.SKU {
-		t.Fatalf("expected item SKU %q, got %q", real.SKU, res.Items[0].SKU)
+	if res.Items[0].Name != real.Name {
+		t.Fatalf("expected item name %q, got %q", real.Name, res.Items[0].Name)
 	}
-	for _, sku := range []string{zeroThresh.SKU, zeroThreshWithStock.SKU} {
+	for _, name := range []string{zeroThresh.Name, zeroThreshWithStock.Name} {
 		for _, it := range res.Items {
-			if it.SKU == sku {
-				t.Fatalf("threshold-0 SKU %q should not appear", sku)
+			if it.Name == name {
+				t.Fatalf("threshold-0 name %q should not appear", name)
 			}
 		}
 	}
 }
 
 // TestReplenishmentService_Check_EmptyInput verifies Check with an empty
-// SKU slice returns an empty (no-error) result.
+// name slice returns an empty (no-error) result.
 func TestReplenishmentService_Check_EmptyInput(t *testing.T) {
 	svc, acc, cleanup := newReplSvc(t)
 	defer cleanup()
 	// Seed something just to make sure the service is wired.
-	_ = seedAccessory(t, acc, "X", "X", 5, 1)
+	_ = seedAccessory(t, acc, "X", 5, 1)
 
 	res, err := svc.Check(context.Background(), nil, "")
 	if err != nil {

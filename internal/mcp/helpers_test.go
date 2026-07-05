@@ -64,35 +64,33 @@ func readLine(r io.Reader) ([]byte, error) {
 // accessory.get tool calls. Kept here so multiple tests share it.
 type decodedAccessory struct {
 	ID                int64  `json:"id"`
-	SKU               string `json:"sku"`
 	Name              string `json:"name"`
 	LowStockThreshold int64  `json:"low_stock_threshold"`
 }
 
 // createAccessoryViaMCP issues an accessory.create tool call and decodes the
 // structured content.
-func createAccessoryViaMCP(t *testing.T, session *mcp.ClientSession, sku string, threshold int64) decodedAccessory {
+func createAccessoryViaMCP(t *testing.T, session *mcp.ClientSession, name string, threshold int64) decodedAccessory {
 	t.Helper()
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name: "accessory.create",
 		Arguments: map[string]any{
-			"sku":                sku,
-			"name":               "test-" + sku,
+			"name":                name,
 			"low_stock_threshold": threshold,
 		},
 	})
 	if err != nil {
-		t.Fatalf("accessory.create %s: %v", sku, err)
+		t.Fatalf("accessory.create %s: %v", name, err)
 	}
 	if res.IsError {
-		t.Fatalf("accessory.create %s IsError: %+v", sku, res)
+		t.Fatalf("accessory.create %s IsError: %+v", name, res)
 	}
 	var out decodedAccessory
 	if err := decodeStructured(res.StructuredContent, &out); err != nil {
-		t.Fatalf("decode accessory.create %s: %v", sku, err)
+		t.Fatalf("decode accessory.create %s: %v", name, err)
 	}
-	if out.ID == 0 || out.SKU != sku {
-		t.Fatalf("unexpected create result for %s: %+v", sku, out)
+	if out.ID == 0 || out.Name != name {
+		t.Fatalf("unexpected create result for %s: %+v", name, out)
 	}
 	return out
 }

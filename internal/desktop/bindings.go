@@ -98,8 +98,8 @@ func (a *App) GetAccessory(ctx context.Context, id int64) (domain.Accessory, err
 	return a.accessory.Get(ctx, id)
 }
 
-func (a *App) GetAccessoryBySKU(ctx context.Context, sku string) (domain.Accessory, error) {
-	return a.accessory.GetBySKU(ctx, sku)
+func (a *App) GetAccessoryByName(ctx context.Context, name string) (domain.Accessory, error) {
+	return a.accessory.GetByName(ctx, name)
 }
 
 func (a *App) UpdateAccessory(ctx context.Context, id int64, u domain.AccessoryUpdate) (domain.Accessory, error) {
@@ -152,6 +152,6 @@ func (a *App) ScanShortage(ctx context.Context) ([]service.ReplenishmentItem, er
 	return a.replenishment.Scan(ctx)
 }
 
-func (a *App) CheckReplenishment(ctx context.Context, skus []string, policy string) (service.BatchCheckResult, error) {
-	return a.replenishment.Check(ctx, skus, policy)
+func (a *App) CheckReplenishment(ctx context.Context, names []string, policy string) (service.BatchCheckResult, error) {
+	return a.replenishment.Check(ctx, names, policy)
 }

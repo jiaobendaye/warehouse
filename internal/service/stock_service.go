@@ -233,16 +233,14 @@ func (s *StockService) Outbound(ctx context.Context, in OutboundCmd) (domain.Inv
 // BatchInbound applies N inbound operations under one transaction.
 // Pre-validation runs first (outside the tx) so invalid input fails fast
 // without holding a write lock. Validation checks each row's accessory
-// existence and SKU uniqueness within the batch — the latter per spec,
-// because two rows on the same SKU is almost always a caller mistake
-// (use distinct SKUs in distinct rows; merge quantities client-side).
+// existence and rejects duplicate accessory_id within the batch — two
+// rows on the same id is almost always a caller mistake (merge quantities
+// client-side).
 func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (BatchResult, error) {
 	if len(items) == 0 {
 		return BatchResult{}, fmt.Errorf("%w: batch must not be empty", ErrInvalidInput)
 	}
-	// Pre-load SKUs to detect duplicate SKU within the batch. This is
-	// outside any tx and read-only.
-	skuByID := make(map[int64]string, len(items))
+	seen := make(map[int64]int, len(items))
 	for i, it := range items {
 		if it.AccessoryID <= 0 {
 			return BatchResult{}, fmt.Errorf("%w: row %d: accessory_id is required",
@@ -252,26 +250,18 @@ func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (Ba
 			return BatchResult{}, fmt.Errorf("%w: row %d: quantity must be positive",
 				ErrInvalidInput, i)
 		}
-		if _, ok := skuByID[it.AccessoryID]; !ok {
-			a, err := s.acc.Get(ctx, it.AccessoryID)
-			if err != nil {
-				if errors.Is(err, repo.ErrNotFound) {
-					return BatchResult{}, fmt.Errorf("%w: row %d: accessory %d not found",
-						ErrNotFound, i, it.AccessoryID)
-				}
-				return BatchResult{}, fmt.Errorf("row %d lookup accessory: %w", i, err)
+		if _, err := s.acc.Get(ctx, it.AccessoryID); err != nil {
+			if errors.Is(err, repo.ErrNotFound) {
+				return BatchResult{}, fmt.Errorf("%w: row %d: accessory %d not found",
+					ErrNotFound, i, it.AccessoryID)
 			}
-			skuByID[it.AccessoryID] = a.SKU
+			return BatchResult{}, fmt.Errorf("row %d lookup accessory: %w", i, err)
 		}
-	}
-	seen := make(map[string]int, len(items))
-	for i, it := range items {
-		sku := skuByID[it.AccessoryID]
-		if prev, ok := seen[sku]; ok {
-			return BatchResult{}, fmt.Errorf("%w: row %d: duplicate sku %q (also at row %d)",
-				ErrInvalidInput, i, sku, prev)
+		if prev, ok := seen[it.AccessoryID]; ok {
+			return BatchResult{}, fmt.Errorf("%w: row %d: duplicate accessory_id %d (also at row %d)",
+				ErrInvalidInput, i, it.AccessoryID, prev)
 		}
-		seen[sku] = i
+		seen[it.AccessoryID] = i
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -8,7 +8,7 @@
 // Error mapping (TranslateError):
 //
 //	service.ErrNotFound                → -32004 (NOT_FOUND)
-//	service.ErrSKUConflict             → -32005 (CONFLICT)
+//	service.ErrNameConflict             → -32005 (CONFLICT)
 //	service.ErrHasFlow                 → -32005 (CONFLICT)
 //	service.ErrInsufficientStock       → -32005 (CONFLICT, "INSUFFICIENT_STOCK")
 //	service.ErrInvalidInput            → -32600 (BAD_REQUEST)
@@ -109,7 +109,7 @@ func Handler(srv *mcpsdk.Server) http.Handler {
 //	sentinel                       code       message
 //	--------                       ----       -------
 //	ErrNotFound                    -32004     "not found"
-//	ErrSKUConflict                 -32005     "conflict" (incl. SKU)
+//	ErrNameConflict                -32005     "conflict" (incl. name)
 //	ErrHasFlow                     -32005     "conflict" (has flow)
 //	ErrInsufficientStock           -32005     "INSUFFICIENT_STOCK"
 //	ErrInvalidInput                -32600     "invalid input"
@@ -128,8 +128,8 @@ func TranslateError(err error) (int, string) {
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		return CodeNotFound, "not found"
-	case errors.Is(err, service.ErrSKUConflict):
-		return CodeConflict, "conflict: sku already exists"
+	case errors.Is(err, service.ErrNameConflict):
+		return CodeConflict, "conflict: name already exists"
 	case errors.Is(err, service.ErrHasFlow):
 		return CodeConflict, "conflict: accessory has inventory flows"
 	case errors.Is(err, service.ErrInsufficientStock):

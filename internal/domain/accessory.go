@@ -8,11 +8,11 @@ import (
 	"strings"
 )
 
-// Accessory is one phone-accessory SKU tracked by the system. Quantity is
-// always counted in 个 (single units) — there is no separate unit field.
+// Accessory is one phone-accessory item tracked by the system. Name is the
+// unique business identifier. Quantity is always counted in 个 (single
+// units) — there is no separate unit field.
 type Accessory struct {
 	ID                int64  `json:"id"`
-	SKU               string `json:"sku"`
 	Name              string `json:"name"`
 	CurrentStock      int64  `json:"current_stock"`
 	LowStockThreshold int64  `json:"low_stock_threshold"`
@@ -21,8 +21,7 @@ type Accessory struct {
 	UpdatedAt         string `json:"updated_at"`
 }
 
-// AccessoryUpdate carries the mutable fields of an accessory. SKU is
-// deliberately excluded — SKU is the immutable identity of a catalog item.
+// AccessoryUpdate carries the mutable fields of an accessory.
 type AccessoryUpdate struct {
 	Name              *string `json:"name,omitempty"`
 	LowStockThreshold *int64  `json:"low_stock_threshold,omitempty"`
@@ -32,9 +31,6 @@ type AccessoryUpdate struct {
 // Validate checks that an Accessory passed to Create has all required fields
 // and that the threshold is non-negative.
 func (a Accessory) Validate() error {
-	if strings.TrimSpace(a.SKU) == "" {
-		return errors.New("sku is required")
-	}
 	if strings.TrimSpace(a.Name) == "" {
 		return errors.New("name is required")
 	}
