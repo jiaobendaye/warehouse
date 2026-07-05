@@ -85,7 +85,6 @@ export default function AccessoryList() {
   const [showCreate, setShowCreate] = useState(false);
   const [cSku, setCSku] = useState('');
   const [cName, setCName] = useState('');
-  const [cUnit, setCUnit] = useState('');
   const [cThreshold, setCThreshold] = useState(0);
   const [cNotes, setCNotes] = useState('');
   const [cErrors, setCErrors] = useState<Record<string, string>>({});
@@ -94,7 +93,6 @@ export default function AccessoryList() {
   // ── edit modal state ──
   const [editItem, setEditItem] = useState<Accessory | null>(null);
   const [eName, setEName] = useState('');
-  const [eUnit, setEUnit] = useState('');
   const [eThreshold, setEThreshold] = useState(0);
   const [eNotes, setENotes] = useState('');
   const [eErrors, setEErrors] = useState<Record<string, string>>({});
@@ -131,7 +129,7 @@ export default function AccessoryList() {
 
   // ── create helpers ──
   const resetCreateForm = () => {
-    setCSku(''); setCName(''); setCUnit(''); setCThreshold(0);
+    setCSku(''); setCName(''); setCThreshold(0);
     setCNotes(''); setCErrors({});
   };
 
@@ -139,7 +137,6 @@ export default function AccessoryList() {
     const errs: Record<string, string> = {};
     if (!cSku.trim()) errs.sku = 'SKU 不能为空';
     if (!cName.trim()) errs.name = '名称不能为空';
-    if (!cUnit.trim()) errs.unit = '单位不能为空';
     if (cThreshold < 0) errs.threshold = '阈值不能小于 0';
     setCErrors(errs);
     return Object.keys(errs).length === 0;
@@ -152,7 +149,6 @@ export default function AccessoryList() {
       await createAccessory({
         sku: cSku.trim(),
         name: cName.trim(),
-        unit: cUnit.trim(),
         low_stock_threshold: cThreshold,
         notes: cNotes.trim() || undefined,
       });
@@ -172,7 +168,6 @@ export default function AccessoryList() {
   const openEdit = (item: Accessory) => {
     setEditItem(item);
     setEName(item.name);
-    setEUnit(item.unit);
     setEThreshold(item.low_stock_threshold);
     setENotes(item.notes || '');
     setEErrors({});
@@ -181,7 +176,6 @@ export default function AccessoryList() {
   const validateEdit = (): boolean => {
     const errs: Record<string, string> = {};
     if (!eName.trim()) errs.name = '名称不能为空';
-    if (!eUnit.trim()) errs.unit = '单位不能为空';
     if (eThreshold < 0) errs.threshold = '阈值不能小于 0';
     setEErrors(errs);
     return Object.keys(errs).length === 0;
@@ -193,7 +187,6 @@ export default function AccessoryList() {
     try {
       await updateAccessory(editItem.id, {
         name: eName.trim(),
-        unit: eUnit.trim(),
         low_stock_threshold: eThreshold,
         notes: eNotes.trim() || undefined,
       });
@@ -228,9 +221,6 @@ export default function AccessoryList() {
       <Field label="名称 *" error={cErrors.name}>
         <input style={inp} value={cName} onChange={e => setCName(e.target.value)} />
       </Field>
-      <Field label="单位 *" error={cErrors.unit}>
-        <input style={inp} value={cUnit} onChange={e => setCUnit(e.target.value)} />
-      </Field>
       <Field label="低库存阈值" error={cErrors.threshold}>
         <input style={inp} type="number" min={0} value={cThreshold} onChange={e => setCThreshold(Number(e.target.value))} />
       </Field>
@@ -254,9 +244,6 @@ export default function AccessoryList() {
       </div>
       <Field label="名称 *" error={eErrors.name}>
         <input style={inp} value={eName} onChange={e => setEName(e.target.value)} />
-      </Field>
-      <Field label="单位 *" error={eErrors.unit}>
-        <input style={inp} value={eUnit} onChange={e => setEUnit(e.target.value)} />
       </Field>
       <Field label="低库存阈值" error={eErrors.threshold}>
         <input style={inp} type="number" min={0} value={eThreshold} onChange={e => setEThreshold(Number(e.target.value))} />
@@ -297,7 +284,6 @@ export default function AccessoryList() {
           <tr>
             <th style={thS}>SKU</th>
             <th style={thS}>名称</th>
-            <th style={thS}>单位</th>
             <th style={thS}>当前库存</th>
             <th style={thS}>阈值</th>
             <th style={thS}>操作</th>
@@ -305,16 +291,15 @@ export default function AccessoryList() {
         </thead>
         <tbody>
           {loading && (
-            <tr><td style={tdS} colSpan={6}>加载中…</td></tr>
+            <tr><td style={tdS} colSpan={5}>加载中…</td></tr>
           )}
           {!loading && items.length === 0 && (
-            <tr><td style={tdS} colSpan={6}>暂无数据</td></tr>
+            <tr><td style={tdS} colSpan={5}>暂无数据</td></tr>
           )}
           {!loading && items.map((item, i) => (
             <tr key={item.id} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
               <td style={tdS}>{item.sku}</td>
               <td style={tdS}>{item.name}</td>
-              <td style={tdS}>{item.unit}</td>
               <td style={tdS}>{item.current_stock}</td>
               <td style={tdS}>{item.low_stock_threshold}</td>
               <td style={tdS}>

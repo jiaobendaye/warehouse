@@ -8,12 +8,12 @@ import (
 	"strings"
 )
 
-// Accessory is one phone-accessory SKU tracked by the system.
+// Accessory is one phone-accessory SKU tracked by the system. Quantity is
+// always counted in 个 (single units) — there is no separate unit field.
 type Accessory struct {
 	ID                int64  `json:"id"`
 	SKU               string `json:"sku"`
 	Name              string `json:"name"`
-	Unit              string `json:"unit"`
 	CurrentStock      int64  `json:"current_stock"`
 	LowStockThreshold int64  `json:"low_stock_threshold"`
 	Notes             string `json:"notes"`
@@ -25,7 +25,6 @@ type Accessory struct {
 // deliberately excluded — SKU is the immutable identity of a catalog item.
 type AccessoryUpdate struct {
 	Name              *string `json:"name,omitempty"`
-	Unit              *string `json:"unit,omitempty"`
 	LowStockThreshold *int64  `json:"low_stock_threshold,omitempty"`
 	Notes             *string `json:"notes,omitempty"`
 }
@@ -38,9 +37,6 @@ func (a Accessory) Validate() error {
 	}
 	if strings.TrimSpace(a.Name) == "" {
 		return errors.New("name is required")
-	}
-	if strings.TrimSpace(a.Unit) == "" {
-		return errors.New("unit is required")
 	}
 	if a.LowStockThreshold < 0 {
 		return errors.New("low_stock_threshold must be non-negative")

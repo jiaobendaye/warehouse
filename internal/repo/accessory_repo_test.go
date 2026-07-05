@@ -32,7 +32,6 @@ func TestAccessoryRepo_CreateAndGetBySKU(t *testing.T) {
 	in := domain.Accessory{
 		SKU:               "SKU-1",
 		Name:              "透明保护壳",
-		Unit:              "个",
 		LowStockThreshold: 5,
 		Notes:             "iPhone 15 适用",
 	}
@@ -70,10 +69,10 @@ func TestAccessoryRepo_CreateDuplicateSKU(t *testing.T) {
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
 
-	if _, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "a", Unit: "个"}); err != nil {
+	if _, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "a"}); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	_, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "b", Unit: "个"})
+	_, err := r.Create(ctx, domain.Accessory{SKU: "DUP", Name: "b"})
 	if err == nil {
 		t.Fatal("expected duplicate-SKU error, got nil")
 	}
@@ -98,9 +97,9 @@ func TestAccessoryRepo_ListAndSearch(t *testing.T) {
 	ctx := context.Background()
 
 	items := []domain.Accessory{
-		{SKU: "A-1", Name: "保护壳 iPhone", Unit: "个"},
-		{SKU: "A-2", Name: "贴膜 iPhone", Unit: "张"},
-		{SKU: "B-1", Name: "数据线", Unit: "条"},
+		{SKU: "A-1", Name: "保护壳 iPhone"},
+		{SKU: "A-2", Name: "贴膜 iPhone"},
+		{SKU: "B-1", Name: "数据线"},
 	}
 	for _, a := range items {
 		if _, err := r.Create(ctx, a); err != nil {
@@ -138,14 +137,13 @@ func TestAccessoryRepo_Update(t *testing.T) {
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
 
-	created, err := r.Create(ctx, domain.Accessory{SKU: "U-1", Name: "原名", Unit: "个", LowStockThreshold: 3})
+	created, err := r.Create(ctx, domain.Accessory{SKU: "U-1", Name: "原名", LowStockThreshold: 3})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	updated, err := r.Update(ctx, created.ID, domain.AccessoryUpdate{
 		Name:              ptr("新名"),
-		Unit:              ptr("盒"),
 		LowStockThreshold: ptrInt64(10),
 		Notes:             ptr("备注"),
 	})
@@ -154,9 +152,6 @@ func TestAccessoryRepo_Update(t *testing.T) {
 	}
 	if updated.Name != "新名" {
 		t.Fatalf("expected name '新名', got %q", updated.Name)
-	}
-	if updated.Unit != "盒" {
-		t.Fatalf("expected unit '盒', got %q", updated.Unit)
 	}
 	if updated.LowStockThreshold != 10 {
 		t.Fatalf("expected threshold 10, got %d", updated.LowStockThreshold)
@@ -172,7 +167,7 @@ func TestAccessoryRepo_Delete(t *testing.T) {
 	defer cleanup()
 	r := repo.NewAccessoryRepo(d)
 	ctx := context.Background()
-	created, err := r.Create(ctx, domain.Accessory{SKU: "DEL", Name: "x", Unit: "个"})
+	created, err := r.Create(ctx, domain.Accessory{SKU: "DEL", Name: "x"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

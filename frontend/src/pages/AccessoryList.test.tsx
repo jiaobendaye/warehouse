@@ -18,7 +18,6 @@ const mockItems = [
     id: 1,
     sku: 'SKU-TEST-001',
     name: '测试螺丝',
-    unit: '个',
     current_stock: 100,
     low_stock_threshold: 20,
     notes: '',
@@ -29,7 +28,6 @@ const mockItems = [
     id: 2,
     sku: 'SKU-TEST-002',
     name: '测试螺母',
-    unit: '袋',
     current_stock: 50,
     low_stock_threshold: 10,
     notes: '易耗品',
@@ -74,11 +72,9 @@ describe('AccessoryList', () => {
     });
 
     expect(screen.getByText('测试螺丝')).toBeInTheDocument();
-    expect(screen.getByText('个')).toBeInTheDocument();
     expect(screen.getByText('100')).toBeInTheDocument();
     expect(screen.getByText('SKU-TEST-002')).toBeInTheDocument();
     expect(screen.getByText('测试螺母')).toBeInTheDocument();
-    expect(screen.getByText('袋')).toBeInTheDocument();
   });
 
   it('shows search input and create button', async () => {

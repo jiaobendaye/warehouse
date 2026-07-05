@@ -187,7 +187,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		ID                int64  `json:"id"`
 		SKU               string `json:"sku"`
 		Name              string `json:"name"`
-		Unit              string `json:"unit"`
 		CurrentStock      int64  `json:"current_stock"`
 		LowStockThreshold int64  `json:"low_stock_threshold"`
 		Notes             string `json:"notes"`
@@ -198,7 +197,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		body := map[string]any{
 			"sku":                 "E2E-CRUD-001",
 			"name":                "测试充电器",
-			"unit":                "个",
 			"low_stock_threshold": 10,
 			"notes":               "e2e full CRUD test",
 		}
@@ -457,7 +455,6 @@ func TestE2E_WebOnly_FullCRUD(t *testing.T) {
 		body := map[string]any{
 			"sku":  "E2E-DEL-ONLY",
 			"name": "delete-only",
-			"unit": "个",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
 		req.Header.Set("Content-Type", "application/json")
@@ -515,7 +512,6 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 		body := map[string]any{
 			"sku":  accSKU,
 			"name": "error-test",
-			"unit": "个",
 			"low_stock_threshold": 5,
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
@@ -537,7 +533,6 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 		body := map[string]any{
 			"sku":  accSKU,
 			"name": "duplicate",
-			"unit": "个",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
 		req.Header.Set("Content-Type", "application/json")
@@ -593,7 +588,7 @@ func TestE2E_WebOnly_ErrorCodes(t *testing.T) {
 	// ── Invalid input → 400 BAD_REQUEST ─────────────────────────────────
 	t.Run("invalid_input", func(t *testing.T) {
 		body := map[string]any{
-			// Missing required "sku", "name", "unit"
+			// Missing required "sku", "name"
 			"notes": "incomplete",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
@@ -649,7 +644,6 @@ func TestE2E_MCPViaHTTP(t *testing.T) {
 		"params": map[string]any{
 			"name": "accessory.create",
 			"arguments": map[string]any{
-				"sku": "MCP-E2E", "name": "MCP测试", "unit": "个", "low_stock_threshold": 5,
 			},
 		},
 	})
@@ -678,7 +672,6 @@ func TestE2E_ClientRef_Idempotency(t *testing.T) {
 		body := map[string]any{
 			"sku":  "E2E-IDM-001",
 			"name": "idempotency-test",
-			"unit": "个",
 		}
 		req, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories", jsonBody(t, body))
 		req.Header.Set("Content-Type", "application/json")

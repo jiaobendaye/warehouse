@@ -185,7 +185,6 @@ func TestTool_AccessoryCreateAndGet(t *testing.T) {
 		Arguments: map[string]any{
 			"sku":                "MCP-A",
 			"name":               "保护壳",
-			"unit":               "个",
 			"low_stock_threshold": 5,
 		},
 	}.toParams()

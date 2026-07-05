@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS accessories (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     sku                 TEXT    NOT NULL UNIQUE,
     name                TEXT    NOT NULL,
-    unit                TEXT    NOT NULL,
     current_stock       INTEGER NOT NULL DEFAULT 0,
     low_stock_threshold INTEGER NOT NULL DEFAULT 0,
     notes               TEXT    NOT NULL DEFAULT '',

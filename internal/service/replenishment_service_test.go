@@ -34,13 +34,12 @@ func newReplSvc(t *testing.T) (*service.ReplenishmentService, *repo.AccessoryRep
 // seedAccessory creates an accessory with the given parameters. If
 // initialStock >= 0 it sets current_stock via the repo's SQL primitives
 // (since Create always starts stock at 0). It returns the loaded row.
-func seedAccessory(t *testing.T, r *repo.AccessoryRepo, sku, name, unit string, threshold, initialStock int64) domain.Accessory {
+func seedAccessory(t *testing.T, r *repo.AccessoryRepo, sku, name string, threshold, initialStock int64) domain.Accessory {
 	t.Helper()
 	ctx := context.Background()
 	created, err := r.Create(ctx, domain.Accessory{
 		SKU:               sku,
 		Name:              name,
-		Unit:              unit,
 		LowStockThreshold: threshold,
 	})
 	if err != nil {
@@ -71,11 +70,11 @@ func TestReplenishmentService_Scan_FindsShortageItems(t *testing.T) {
 	ctx := context.Background()
 
 	// 1) overstocked: 100 >= 10
-	over := seedAccessory(t, acc, "OVER", "Over", "个", 10, 100)
+	over := seedAccessory(t, acc, "OVER", "Over", 10, 100)
 	// 2) just at threshold: 5 >= 5 -> not short
-	ok := seedAccessory(t, acc, "OK", "OK", "个", 5, 5)
+	ok := seedAccessory(t, acc, "OK", "OK", 5, 5)
 	// 3) short: 2 < 10 -> shortage=8
-	short := seedAccessory(t, acc, "SHORT", "Short", "个", 10, 2)
+	short := seedAccessory(t, acc, "SHORT", "Short", 10, 2)
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -124,9 +123,9 @@ func TestReplenishmentService_Scan_SortsByShortageDesc(t *testing.T) {
 	ctx := context.Background()
 
 	// Create in a non-shortage order to ensure sorting is real, not insertion order.
-	_ = seedAccessory(t, acc, "S2", "SmallShortage", "个", 5, 4)  // shortage=1
-	_ = seedAccessory(t, acc, "S1", "MediumShortage", "个", 50, 10) // shortage=40
-	_ = seedAccessory(t, acc, "S3", "BigShortage", "个", 100, 1)   // shortage=99
+	_ = seedAccessory(t, acc, "S2", "SmallShortage", 5, 4)  // shortage=1
+	_ = seedAccessory(t, acc, "S1", "MediumShortage", 50, 10) // shortage=40
+	_ = seedAccessory(t, acc, "S3", "BigShortage", 100, 1)   // shortage=99
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -157,8 +156,8 @@ func TestReplenishmentService_Scan_ExcludesThresholdZero(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	zeroThresh := seedAccessory(t, acc, "Z", "ZeroThreshold", "个", 0, 0)
-	realShort := seedAccessory(t, acc, "R", "RealShort", "个", 3, 1)
+	zeroThresh := seedAccessory(t, acc, "Z", "ZeroThreshold", 0, 0)
+	realShort := seedAccessory(t, acc, "R", "RealShort", 3, 1)
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -184,9 +183,9 @@ func TestReplenishmentService_Scan_NoShortage_ReturnsEmpty(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "A", "A", "个", 5, 100)
-	_ = seedAccessory(t, acc, "B", "B", "个", 1, 10)
-	_ = seedAccessory(t, acc, "C", "C", "个", 3, 3) // exactly at threshold
+	_ = seedAccessory(t, acc, "A", "A", 5, 100)
+	_ = seedAccessory(t, acc, "B", "B", 1, 10)
+	_ = seedAccessory(t, acc, "C", "C", 3, 3) // exactly at threshold
 
 	items, err := svc.Scan(ctx)
 	if err != nil {
@@ -210,9 +209,9 @@ func TestReplenishmentService_Check_PartialShortage(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	shortA := seedAccessory(t, acc, "A", "A", "个", 10, 2) // shortage=8
-	_ = seedAccessory(t, acc, "B", "B", "个", 5, 100)      // OK
-	shortC := seedAccessory(t, acc, "C", "C", "个", 4, 1)  // shortage=3
+	shortA := seedAccessory(t, acc, "A", "A", 10, 2) // shortage=8
+	_ = seedAccessory(t, acc, "B", "B", 5, 100)      // OK
+	shortC := seedAccessory(t, acc, "C", "C", 4, 1)  // shortage=3
 
 	res, err := svc.Check(ctx, []string{"A", "B", "C"}, "")
 	if err != nil {
@@ -248,8 +247,8 @@ func TestReplenishmentService_Check_ReportsNotFound(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	shortA := seedAccessory(t, acc, "A", "A", "个", 10, 2)
-	_ = seedAccessory(t, acc, "B", "B", "个", 5, 100)
+	shortA := seedAccessory(t, acc, "A", "A", 10, 2)
+	_ = seedAccessory(t, acc, "B", "B", 5, 100)
 
 	res, err := svc.Check(ctx, []string{"A", "NOT-A-SKU", "B", "GHOST"}, "")
 	if err != nil {
@@ -280,7 +279,7 @@ func TestReplenishmentService_Check_FixedPolicy_UsesFixedQuantity(t *testing.T) 
 	ctx := context.Background()
 
 	// Stock 2, threshold 10 -> shortage=8. But policy says fixed:50.
-	_ = seedAccessory(t, acc, "X", "X", "个", 10, 2)
+	_ = seedAccessory(t, acc, "X", "X", 10, 2)
 
 	res, err := svc.Check(ctx, []string{"X"}, "fixed:50")
 	if err != nil {
@@ -305,7 +304,7 @@ func TestReplenishmentService_Check_DefaultPolicy_UsesShortage(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "Y", "Y", "个", 20, 5) // shortage=15
+	_ = seedAccessory(t, acc, "Y", "Y", 20, 5) // shortage=15
 
 	for _, policy := range []string{"", "default"} {
 		t.Run("policy="+policy, func(t *testing.T) {
@@ -335,7 +334,7 @@ func TestReplenishmentService_Check_InvalidPolicy_ReturnsErrInvalidInput(t *test
 	defer cleanup()
 	ctx := context.Background()
 
-	_ = seedAccessory(t, acc, "Z", "Z", "个", 10, 2)
+	_ = seedAccessory(t, acc, "Z", "Z", 10, 2)
 
 	cases := []struct {
 		name   string
@@ -366,12 +365,12 @@ func TestReplenishmentService_Check_ThresholdZero_NotShortage(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	zeroThresh := seedAccessory(t, acc, "ZERO", "Zero", "个", 0, 0)
+	zeroThresh := seedAccessory(t, acc, "ZERO", "Zero", 0, 0)
 	// zeroThresh already has stock=0; also seed a zero-threshold item
 	// with positive stock that should still not appear.
-	zeroThreshWithStock := seedAccessory(t, acc, "ZERO2", "Zero2", "个", 0, 100)
+	zeroThreshWithStock := seedAccessory(t, acc, "ZERO2", "Zero2", 0, 100)
 	// An actually-short row to confirm Check is functioning correctly.
-	real := seedAccessory(t, acc, "REAL", "Real", "个", 5, 1)
+	real := seedAccessory(t, acc, "REAL", "Real", 5, 1)
 
 	res, err := svc.Check(ctx, []string{zeroThresh.SKU, zeroThreshWithStock.SKU, real.SKU}, "")
 	if err != nil {
@@ -398,7 +397,7 @@ func TestReplenishmentService_Check_EmptyInput(t *testing.T) {
 	svc, acc, cleanup := newReplSvc(t)
 	defer cleanup()
 	// Seed something just to make sure the service is wired.
-	_ = seedAccessory(t, acc, "X", "X", "个", 5, 1)
+	_ = seedAccessory(t, acc, "X", "X", 5, 1)
 
 	res, err := svc.Check(context.Background(), nil, "")
 	if err != nil {

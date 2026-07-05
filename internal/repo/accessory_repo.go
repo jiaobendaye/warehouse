@@ -26,9 +26,9 @@ func NewAccessoryRepo(d *sql.DB) *AccessoryRepo { return &AccessoryRepo{db: d} }
 // conflict surfaces as the underlying SQLite UNIQUE error.
 func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain.Accessory, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO accessories(sku, name, unit, current_stock, low_stock_threshold, notes)
-		 VALUES (?, ?, ?, 0, ?, ?)`,
-		in.SKU, in.Name, in.Unit, in.LowStockThreshold, in.Notes,
+		`INSERT INTO accessories(sku, name, current_stock, low_stock_threshold, notes)
+		 VALUES (?, ?, 0, ?, ?)`,
+		in.SKU, in.Name, in.LowStockThreshold, in.Notes,
 	)
 	if err != nil {
 		return domain.Accessory{}, fmt.Errorf("insert accessory: %w", err)
@@ -43,7 +43,7 @@ func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain
 // Get loads an accessory by primary key.
 func (r *AccessoryRepo) Get(ctx context.Context, id int64) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, sku, name, unit, current_stock, low_stock_threshold, notes, created_at, updated_at
+		`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 		 FROM accessories WHERE id = ?`, id)
 	return scanAccessory(row)
 }
@@ -51,7 +51,7 @@ func (r *AccessoryRepo) Get(ctx context.Context, id int64) (domain.Accessory, er
 // GetBySKU loads an accessory by its unique SKU.
 func (r *AccessoryRepo) GetBySKU(ctx context.Context, sku string) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, sku, name, unit, current_stock, low_stock_threshold, notes, created_at, updated_at
+		`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 		 FROM accessories WHERE sku = ?`, sku)
 	return scanAccessory(row)
 }
@@ -68,13 +68,13 @@ func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) (
 	)
 	if q == "" {
 		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, sku, name, unit, current_stock, low_stock_threshold, notes, created_at, updated_at
+			`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 			 FROM accessories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
 			limit, offset)
 	} else {
 		like := "%" + q + "%"
 		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, sku, name, unit, current_stock, low_stock_threshold, notes, created_at, updated_at
+			`SELECT id, sku, name, current_stock, low_stock_threshold, notes, created_at, updated_at
 			 FROM accessories
 			 WHERE sku LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE
 			 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
@@ -124,9 +124,6 @@ func (r *AccessoryRepo) Update(ctx context.Context, id int64, u domain.Accessory
 	if u.Name != nil {
 		cur.Name = *u.Name
 	}
-	if u.Unit != nil {
-		cur.Unit = *u.Unit
-	}
 	if u.LowStockThreshold != nil {
 		cur.LowStockThreshold = *u.LowStockThreshold
 	}
@@ -135,10 +132,10 @@ func (r *AccessoryRepo) Update(ctx context.Context, id int64, u domain.Accessory
 	}
 	if _, err := r.db.ExecContext(ctx,
 		`UPDATE accessories
-		 SET name = ?, unit = ?, low_stock_threshold = ?, notes = ?,
+		 SET name = ?, low_stock_threshold = ?, notes = ?,
 		     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		 WHERE id = ?`,
-		cur.Name, cur.Unit, cur.LowStockThreshold, cur.Notes, id,
+		cur.Name, cur.LowStockThreshold, cur.Notes, id,
 	); err != nil {
 		return domain.Accessory{}, fmt.Errorf("update accessory: %w", err)
 	}
@@ -220,7 +217,7 @@ type rowScanner interface {
 func scanAccessory(s rowScanner) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := s.Scan(
-		&a.ID, &a.SKU, &a.Name, &a.Unit, &a.CurrentStock,
+		&a.ID, &a.SKU, &a.Name, &a.CurrentStock,
 		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
@@ -235,7 +232,7 @@ func scanAccessory(s rowScanner) (domain.Accessory, error) {
 func scanAccessoryRows(rows *sql.Rows) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := rows.Scan(
-		&a.ID, &a.SKU, &a.Name, &a.Unit, &a.CurrentStock,
+		&a.ID, &a.SKU, &a.Name, &a.CurrentStock,
 		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {

@@ -119,7 +119,6 @@ func newAccessory(t *testing.T, h http.Handler, sku string) domain.Accessory {
 	body := domain.Accessory{
 		SKU:               sku,
 		Name:              "保护壳 " + sku,
-		Unit:              "个",
 		LowStockThreshold: 5,
 	}
 	resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
@@ -143,7 +142,6 @@ func TestAccessories_FullCRUD(t *testing.T) {
 	body := domain.Accessory{
 		SKU:               "SKU-A",
 		Name:              "保护壳",
-		Unit:              "个",
 		LowStockThreshold: 3,
 		Notes:             "iPhone 15",
 	}
@@ -197,7 +195,7 @@ func TestAccessories_FullCRUD(t *testing.T) {
 // TestAccessories_DuplicateSKU_409 — second create with same SKU returns 409 CONFLICT.
 func TestAccessories_DuplicateSKU_409(t *testing.T) {
 	h := newRouter(t)
-	body := domain.Accessory{SKU: "DUPE", Name: "保护壳", Unit: "个"}
+	body := domain.Accessory{SKU: "DUPE", Name: "保护壳"}
 	resp, _ := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("first create failed: %d", resp.StatusCode)
@@ -332,7 +330,7 @@ func TestReplenishment_Scan_ReturnsShortages(t *testing.T) {
 	h := newRouter(t)
 	newAccessory(t, h, "LOW1") // default threshold 5
 	// Manually set up a zero-threshold accessory that should NOT appear.
-	body := domain.Accessory{SKU: "ZER0", Name: "不需要补货", Unit: "个", LowStockThreshold: 0}
+	body := domain.Accessory{SKU: "ZER0", Name: "不需要补货", LowStockThreshold: 0}
 	resp, _ := httpDo(t, h, http.MethodPost, "/api/v1/accessories", body)
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("zero-thresh create: %d", resp.StatusCode)

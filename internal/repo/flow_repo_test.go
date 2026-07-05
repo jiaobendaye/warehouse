@@ -14,7 +14,7 @@ import (
 func seedAccessory(t *testing.T, d *sql.DB) domain.Accessory {
 	t.Helper()
 	a, err := repo.NewAccessoryRepo(d).Create(context.Background(), domain.Accessory{
-		SKU: "F-1", Name: "x", Unit: "个",
+		SKU: "F-1", Name: "x",
 	})
 	if err != nil {
 		t.Fatalf("seed accessory: %v", err)

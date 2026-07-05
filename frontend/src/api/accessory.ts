@@ -4,7 +4,6 @@ export interface Accessory {
   id: number;
   sku: string;
   name: string;
-  unit: string;
   current_stock: number;
   low_stock_threshold: number;
   notes: string;
@@ -15,14 +14,12 @@ export interface Accessory {
 export interface AccessoryCreate {
   sku: string;
   name: string;
-  unit: string;
   low_stock_threshold: number;
   notes?: string;
 }
 
 export interface AccessoryUpdate {
   name?: string;
-  unit?: string;
   low_stock_threshold?: number;
   notes?: string;
 }

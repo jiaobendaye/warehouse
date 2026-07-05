@@ -40,7 +40,6 @@ type accessoryGetInput struct {
 type accessoryCreateInput struct {
 	SKU               string `json:"sku"                 jsonschema:"unique sku"`
 	Name              string `json:"name"                jsonschema:"display name"`
-	Unit              string `json:"unit"                jsonschema:"unit of measure (e.g. 个, 件)"`
 	LowStockThreshold int64  `json:"low_stock_threshold" jsonschema:"threshold for replenishment alerts (0 disables)"`
 	Notes             string `json:"notes,omitempty"     jsonschema:"free-form notes"`
 }
@@ -49,7 +48,6 @@ type accessoryCreateInput struct {
 type accessoryUpdateInput struct {
 	ID                int64   `json:"id"                            jsonschema:"accessory id"`
 	Name              *string `json:"name,omitempty"                jsonschema:"new name"`
-	Unit              *string `json:"unit,omitempty"                jsonschema:"new unit"`
 	LowStockThreshold *int64  `json:"low_stock_threshold,omitempty" jsonschema:"new threshold"`
 	Notes             *string `json:"notes,omitempty"               jsonschema:"new notes"`
 }
@@ -108,7 +106,6 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 		acc, err := svc.Create(ctx, domain.Accessory{
 			SKU:               in.SKU,
 			Name:              in.Name,
-			Unit:              in.Unit,
 			LowStockThreshold: in.LowStockThreshold,
 			Notes:             in.Notes,
 		})
@@ -123,7 +120,6 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryUpdateInput) (*mcpsdk.CallToolResult, domain.Accessory, error) {
 		upd := domain.AccessoryUpdate{
 			Name:              in.Name,
-			Unit:              in.Unit,
 			LowStockThreshold: in.LowStockThreshold,
 			Notes:             in.Notes,
 		}

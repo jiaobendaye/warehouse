@@ -26,7 +26,7 @@ func newStockSvc(t *testing.T) (*service.StockService, *repo.AccessoryRepo, *rep
 func seedAccessoryWithStock(t *testing.T, acc *repo.AccessoryRepo, sku string, stock int64) domain.Accessory {
 	t.Helper()
 	a, err := acc.Create(context.Background(), domain.Accessory{
-		SKU: sku, Name: sku, Unit: "个",
+		SKU: sku, Name: sku,
 	})
 	if err != nil {
 		t.Fatalf("seed create %s: %v", sku, err)

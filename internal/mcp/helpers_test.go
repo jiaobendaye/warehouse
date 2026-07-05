@@ -66,7 +66,6 @@ type decodedAccessory struct {
 	ID                int64  `json:"id"`
 	SKU               string `json:"sku"`
 	Name              string `json:"name"`
-	Unit              string `json:"unit"`
 	LowStockThreshold int64  `json:"low_stock_threshold"`
 }
 
@@ -79,7 +78,6 @@ func createAccessoryViaMCP(t *testing.T, session *mcp.ClientSession, sku string,
 		Arguments: map[string]any{
 			"sku":                sku,
 			"name":               "test-" + sku,
-			"unit":               "个",
 			"low_stock_threshold": threshold,
 		},
 	})
