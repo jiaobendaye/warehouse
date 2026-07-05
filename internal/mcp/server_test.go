@@ -28,6 +28,8 @@ import (
 	"github.com/jiaobendaye/warehouse/internal/db"
 	"github.com/jiaobendaye/warehouse/internal/mcp"
 	"github.com/jiaobendaye/warehouse/internal/repo"
+	"github.com/xuri/excelize/v2"
+
 	"github.com/jiaobendaye/warehouse/internal/service"
 )
 
@@ -124,7 +126,7 @@ func TestTranslateError_WrappedSentinels(t *testing.T) {
 // tools/list — 13 tools exactly
 // ------------------------------------------------------------------
 
-func TestToolsList_AllThirteen(t *testing.T) {
+func TestToolsList_AllFifteen(t *testing.T) {
 	svcs := newTestServices(t)
 	srv := mcp.NewServer(svcs)
 
@@ -155,6 +157,8 @@ func TestToolsList_AllThirteen(t *testing.T) {
 		"flow.get",
 		"replenishment.scan",
 		"replenishment.check",
+		"stock.file_outbound",
+		"stock.file_outbound.execute",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("want %d tools, got %d (%v)", len(want), len(got), got)
@@ -492,8 +496,8 @@ func TestStdioRoundtrip_Minimal(t *testing.T) {
 		t.Fatalf("want result, got %v", resp)
 	}
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 13 {
-		t.Fatalf("want 13 tools, got %d", len(tools))
+	if len(tools) != 15 {
+		t.Fatalf("want 15 tools, got %d", len(tools))
 	}
 
 	// Shutdown: close client-side writer; cancel context.
@@ -545,3 +549,374 @@ type wrappedErr struct {
 
 func (w wrappedErr) Error() string { return w.sentinel.Error() + ": " + w.ctx }
 func (w wrappedErr) Unwrap() error { return w.sentinel }
+// --- replenishment.check with names (post-SKU removal) -------------------
+
+func TestTool_ReplenishmentCheck_WithNames(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Create two accessories and inbound stock
+	short := createAccessoryViaMCP(t, session, "补货测试-短缺", 5)
+	ok := createAccessoryViaMCP(t, session, "补货测试-充足", 3)
+
+	// Inbound: short gets 2 (below threshold 5), ok gets 10 (above threshold 3)
+	_, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": short.ID, "quantity": 2},
+	})
+	if err != nil {
+		t.Fatalf("inbound short: %v", err)
+	}
+	_, err = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": ok.ID, "quantity": 10},
+	})
+	if err != nil {
+		t.Fatalf("inbound ok: %v", err)
+	}
+
+	// Check with names
+	checkRes, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "replenishment.check",
+		Arguments: map[string]any{
+			"names":  []string{"补货测试-短缺", "补货测试-充足", "不存在的配件"},
+			"policy": "default",
+		},
+	})
+	if err != nil {
+		t.Fatalf("replenishment.check: %v", err)
+	}
+	if checkRes.IsError {
+		t.Fatalf("replenishment.check IsError: %+v", checkRes)
+	}
+
+	var result struct {
+		Items    []struct {
+			Name              string `json:"name"`
+			Shortage          int64  `json:"shortage"`
+			SuggestedQuantity int64  `json:"suggested_quantity"`
+		} `json:"items"`
+		NotFound []string `json:"not_found"`
+	}
+	if err := decodeStructured(checkRes.StructuredContent, &result); err != nil {
+		t.Fatalf("decode check result: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 shortage item, got %d", len(result.Items))
+	}
+	if result.Items[0].Name != "补货测试-短缺" {
+		t.Fatalf("expected 补货测试-短缺, got %q", result.Items[0].Name)
+	}
+	if result.Items[0].Shortage != 3 {
+		t.Fatalf("expected shortage=3, got %d", result.Items[0].Shortage)
+	}
+	if len(result.NotFound) != 1 || result.NotFound[0] != "不存在的配件" {
+		t.Fatalf("expected NotFound=[不存在的配件], got %v", result.NotFound)
+	}
+}
+
+func TestTool_ReplenishmentScan_ExcludesThresholdZero(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Create accessory with threshold=0 (should never appear in scan)
+	createAccessoryViaMCP(t, session, "零阈值配件", 0)
+	// Create accessory below threshold
+	short := createAccessoryViaMCP(t, session, "告急配件-MCP", 10)
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": short.ID, "quantity": 3},
+	})
+
+	scanRes, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "replenishment.scan", Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("replenishment.scan: %v", err)
+	}
+	var result struct {
+		Items []struct {
+			Name     string `json:"name"`
+			Shortage int64  `json:"shortage"`
+		} `json:"items"`
+	}
+	if err := decodeStructured(scanRes.StructuredContent, &result); err != nil {
+		t.Fatalf("decode scan result: %v", err)
+	}
+	// Only "告急配件-MCP" should appear, NOT "零阈值配件"
+	for _, it := range result.Items {
+		if it.Name == "零阈值配件" {
+			t.Fatalf("threshold=0 accessory should not appear in scan")
+		}
+	}
+	found := false
+	for _, it := range result.Items {
+		if it.Name == "告急配件-MCP" {
+			found = true
+			if it.Shortage != 7 {
+				t.Fatalf("expected shortage=7, got %d", it.Shortage)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("告急配件-MCP should appear in scan")
+	}
+}
+
+func TestTool_AccessoryGet_ByName(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	acc := createAccessoryViaMCP(t, session, "MCP-NAME-GET", 5)
+
+	getRes, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "accessory.get", Arguments: map[string]any{"name": "MCP-NAME-GET"},
+	})
+	if err != nil {
+		t.Fatalf("accessory.get by name: %v", err)
+	}
+	if getRes.IsError {
+		t.Fatalf("accessory.get IsError: %+v", getRes)
+	}
+	var got struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := decodeStructured(getRes.StructuredContent, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != acc.ID || got.Name != "MCP-NAME-GET" {
+		t.Fatalf("expected id=%d name=MCP-NAME-GET, got %+v", acc.ID, got)
+	}
+}
+
+func TestTool_AccessoryGet_BothIDAndName_Rejected(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	_, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name: "accessory.get", Arguments: map[string]any{"id": 1, "name": "X"},
+	})
+	if err == nil {
+		t.Fatal("expected error for both id and name")
+	}
+}
+
+func TestTool_FileOutboundFlow(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Create accessories with stock
+	a1 := createAccessoryViaMCP(t, session, "MCP文件出库-充足", 5)
+	a2 := createAccessoryViaMCP(t, session, "MCP文件出库-不足", 3)
+
+	// Inbound stock
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": a1.ID, "quantity": 10},
+	})
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": a2.ID, "quantity": 2},
+	})
+
+	// Outbound: a1 sufficient (5), a2 insufficient (need 8, have 2)
+	outRes, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.batch_outbound",
+		Arguments: map[string]any{
+			"items": []map[string]any{
+				{"accessory_id": a1.ID, "quantity": 5},
+				{"accessory_id": a2.ID, "quantity": 8},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("batch_outbound: %v", err)
+	}
+	// Should fail because a2 has insufficient stock
+	if !outRes.IsError {
+		t.Fatal("expected IsError for insufficient stock in batch_outbound")
+	}
+
+	// Now do individual outbounds
+	out1, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.outbound", Arguments: map[string]any{"accessory_id": a1.ID, "quantity": 5},
+	})
+	if err != nil || out1.IsError {
+		t.Fatalf("outbound a1 should succeed, IsError=%v err=%v", out1.IsError, err)
+	}
+
+	// Verify stock
+	getRes, _ := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "accessory.get", Arguments: map[string]any{"id": a1.ID},
+	})
+	var a1After struct {
+		Name         string `json:"name"`
+		CurrentStock int64  `json:"current_stock"`
+	}
+	_ = decodeStructured(getRes.StructuredContent, &a1After)
+	if a1After.CurrentStock != 5 {
+		t.Fatalf("a1 stock: expected 5 (10-5), got %d", a1After.CurrentStock)
+	}
+
+	// Scan should show nothing since a1 threshold(5) >= stock(5), a2 is below but... wait a2 stock is 2, threshold is 3
+	scanRes, _ := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "replenishment.scan", Arguments: map[string]any{},
+	})
+	var scanResult struct {
+		Items []struct {
+			Name     string `json:"name"`
+			Shortage int64  `json:"shortage"`
+		} `json:"items"`
+	}
+	_ = decodeStructured(scanRes.StructuredContent, &scanResult)
+	for _, it := range scanResult.Items {
+		if it.Name == "MCP文件出库-不足" && it.Shortage != 1 {
+			t.Fatalf("a2 shortage: expected 1, got %d", it.Shortage)
+		}
+	}
+}
+
+// --- stock.file_outbound MCP tool ----------------------------------------
+
+func TestTool_FileOutbound_Preview(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Create accessories
+	createAccessoryViaMCP(t, session, "文件预览配件A", 5)
+	createAccessoryViaMCP(t, session, "文件预览配件B", 3)
+
+	// stock.inbound
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": 1, "quantity": 10},
+	})
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": 2, "quantity": 5},
+	})
+
+	// Call stock.file_outbound with a file path that doesn't exist → IsError
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.file_outbound", Arguments: map[string]any{"file_path": "/nonexistent/file.xlsx"},
+	})
+	if err != nil || !res.IsError {
+		t.Fatal("expected IsError for missing file")
+	}
+
+	// Call with existing xlsx
+	// We need a real xlsx file for this test - create a minimal one
+	tmpDir := t.TempDir()
+	xlsxPath := tmpDir + "/test.xlsx"
+	createTestXlsx(t, xlsxPath, [][]string{
+		{"档口A", "档口B"},
+		{"文件预览配件A x3", "文件预览配件B x2"},
+		{"不存在的配件 x1", ""},
+	})
+
+	res2, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.file_outbound", Arguments: map[string]any{"file_path": xlsxPath},
+	})
+	if err != nil {
+		t.Fatalf("stock.file_outbound: %v", err)
+	}
+	if res2.IsError {
+		t.Fatalf("stock.file_outbound IsError: %+v", res2)
+	}
+	var preview struct {
+		MatchedCount  int `json:"matched_count"`
+		NotFoundCount int `json:"not_found_count"`
+		TotalItems    int `json:"total_items"`
+	}
+	if err := decodeStructured(res2.StructuredContent, &preview); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if preview.MatchedCount != 2 {
+		t.Fatalf("expected 2 matched, got %d", preview.MatchedCount)
+	}
+	if preview.NotFoundCount != 1 {
+		t.Fatalf("expected 1 not_found, got %d", preview.NotFoundCount)
+	}
+	if preview.TotalItems != 3 {
+		t.Fatalf("expected 3 total, got %d", preview.TotalItems)
+	}
+}
+
+func TestTool_FileOutbound_Execute(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Create one existing accessory with stock
+	createAccessoryViaMCP(t, session, "文件执行配件-存在", 5)
+	_, _ = session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": 1, "quantity": 10},
+	})
+
+	tmpDir := t.TempDir()
+	xlsxPath := tmpDir + "/test_exec.xlsx"
+	createTestXlsx(t, xlsxPath, [][]string{
+		{"档口"},
+		{"文件执行配件-存在 x5"},
+		{"文件执行配件-新建 x3"},
+	})
+
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.file_outbound.execute", Arguments: map[string]any{"file_path": xlsxPath},
+	})
+	if err != nil {
+		t.Fatalf("stock.file_outbound.execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("stock.file_outbound.execute IsError: %+v", res)
+	}
+	var result struct {
+		Outbound  int `json:"outbound"`
+		Created   int `json:"created"`
+		Shortages int `json:"shortages"`
+	}
+	if err := decodeStructured(res.StructuredContent, &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.Outbound != 2 {
+		t.Fatalf("expected outbound=2, got %d", result.Outbound)
+	}
+	if result.Created != 1 {
+		t.Fatalf("expected created=1, got %d", result.Created)
+	}
+}
+
+// createTestXlsx writes a minimal xlsx with a "汇总" sheet.
+func createTestXlsx(t *testing.T, path string, data [][]string) {
+	t.Helper()
+	f := excelize.NewFile()
+	// Delete default sheet and create "汇总"
+	f.NewSheet("汇总")
+	f.DeleteSheet("Sheet1")
+	for r, row := range data {
+		for c, val := range row {
+			cell, _ := excelize.CoordinatesToCellName(c+1, r+1)
+			f.SetCellValue("汇总", cell, val)
+		}
+	}
+	if err := f.SaveAs(path); err != nil {
+		t.Fatalf("create test xlsx: %v", err)
+	}
+}
