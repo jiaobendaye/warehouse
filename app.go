@@ -49,9 +49,10 @@ func startGUI(cfg config.Config, srvMgr *desktop.ServerManager, svcs Services) {
 		AssetServer: &assetserver.Options{
 			Assets: frontendAssets,
 			// Forward /api/*, /mcp/* and /healthz from the WebView to the
-			// embedded HTTP server so GUI mode uses the same backend as
-			// browser mode (no need for a separate Wails-binding adapter).
-			Handler: desktop.NewAPIProxy(srvMgr.Addr),
+			// embedded HTTP server, and fall back to index.html for SPA
+			// deep links like /inbound, /outbound, /replenishment, /settings
+			// so a hard refresh on those paths still boots the SPA.
+			Handler: desktop.NewSPAHandler(srvMgr.Addr, frontendAssets),
 		},
 		OnStartup:  app.OnStartup,
 		OnShutdown: app.OnShutdown,

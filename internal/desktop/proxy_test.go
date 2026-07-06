@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // fakeBackend records the request it received and returns 200 with a known
@@ -129,3 +130,97 @@ func TestAPIProxy_TracksAddrChanges(t *testing.T) {
 
 // Compile-time check: NewAPIProxy returns an http.Handler.
 var _ http.Handler = NewAPIProxy(func() string { return "" })
+
+// memFS is a tiny in-memory fs.FS that exposes a single index.html and
+// an assets/index.js. It mimics the layout the Wails embed.FS produces
+// from `//go:embed all:frontend/dist` after dist is built.
+func memFS(t *testing.T, indexHTML, assetJS string) fstest.MapFS {
+	t.Helper()
+	return fstest.MapFS{
+		"index.html":             &fstest.MapFile{Data: []byte(indexHTML)},
+		"assets/index.js":        &fstest.MapFile{Data: []byte(assetJS)},
+	}
+}
+
+func TestSPAHandler_FallsBackToIndexForSPARoutes(t *testing.T) {
+	backend := fakeBackend(t)
+	defer backend.Close()
+	assets := memFS(t, "<!doctype html><html><body>SPA</body></html>", "console.log(1);")
+
+	h := NewSPAHandler(func() string { return backendAddr(backend) }, assets)
+
+	// Each of these is a real SPA route in App.tsx.
+	for _, p := range []string{"/", "/inbound", "/outbound", "/flows", "/replenishment", "/settings", "/some/deep/nested/route"} {
+		t.Run(p, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, p, nil)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			if got := rr.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+				t.Errorf("Content-Type = %q, want text/html prefix", got)
+			}
+			if !strings.Contains(rr.Body.String(), "SPA") {
+				t.Errorf("body = %q, want it to contain index.html payload", rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestSPAHandler_ForwardsAPIPaths(t *testing.T) {
+	backend := fakeBackend(t)
+	defer backend.Close()
+	assets := memFS(t, "<html></html>", "")
+	h := NewSPAHandler(func() string { return backendAddr(backend) }, assets)
+
+	for _, p := range []string{"/api/v1/accessories", "/mcp/sse", "/healthz"} {
+		t.Run(p, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, p, nil)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rr.Code)
+			}
+			if !strings.Contains(rr.Body.String(), p) {
+				t.Errorf("backend didn't see %s; body=%q", p, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestSPAHandler_NilAssetsReturnsInlineFallback(t *testing.T) {
+	h := NewSPAHandler(func() string { return "" }, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/inbound", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "not built") {
+		t.Errorf("body = %q, want fallback message", rr.Body.String())
+	}
+}
+
+func TestSPAHandler_RejectsNonGET(t *testing.T) {
+	assets := memFS(t, "<html></html>", "")
+	h := NewSPAHandler(func() string { return "" }, assets)
+
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		t.Run(m, func(t *testing.T) {
+			req := httptest.NewRequest(m, "/inbound", nil)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusMethodNotAllowed {
+				t.Errorf("method %s: status = %d, want 405", m, rr.Code)
+			}
+		})
+	}
+}
+
+// Compile-time check: NewSPAHandler returns an http.Handler.
+var _ http.Handler = NewSPAHandler(func() string { return "" }, nil)
