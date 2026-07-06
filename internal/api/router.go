@@ -48,6 +48,7 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 		r.Get("/accessories/{id}", acc.Get)
 		r.Patch("/accessories/{id}", acc.Update)
 		r.Delete("/accessories/{id}", acc.Delete)
+		r.Get("/accessories/export", acc.Export)
 
 		// Stock movements
 		r.Post("/stock/inbound", stk.Inbound)

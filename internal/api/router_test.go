@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
@@ -513,6 +514,150 @@ func TestStockFileInbound_RejectsMissingFile(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 	}
+}
+
+// --- Accessory xlsx export ----------------------------------------------
+
+// TestAccessoriesExport_RoundTrip seeds two accessories, hits the export
+// endpoint, and verifies the returned xlsx re-opens with the same rows.
+// This guards both the HTTP plumbing (status, headers, content-type) and
+// the build function (cell layout) in one assertion path.
+func TestAccessoriesExport_RoundTrip(t *testing.T) {
+	h := newRouter(t)
+
+	// Seed: two accessories, with distinct stock + threshold so we can
+	// tell them apart in the export.
+	a := newAccessory(t, h, "导出-A")
+	if resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/stock/inbound",
+		service.InboundCmd{AccessoryID: a.ID, Quantity: 4}); resp.StatusCode/100 != 2 {
+		t.Fatalf("inbound A: %d %s", resp.StatusCode, raw)
+	}
+	if resp, raw := httpDo(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/accessories/%d", a.ID),
+		domain.AccessoryUpdate{Notes: pStr("A-remark")}); resp.StatusCode/100 != 2 {
+		t.Fatalf("patch A notes: %d %s", resp.StatusCode, raw)
+	}
+	b := newAccessory(t, h, "导出-B")
+	if resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/stock/inbound",
+		service.InboundCmd{AccessoryID: b.ID, Quantity: 11}); resp.StatusCode/100 != 2 {
+		t.Fatalf("inbound B: %d %s", resp.StatusCode, raw)
+	}
+
+	// Hit export. We use httpDo with a nil body so Content-Type is not set
+	// — the endpoint is GET, no body needed.
+	resp, raw := httpDo(t, h, http.MethodGet, "/api/v1/accessories/export", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, raw)
+	}
+
+	// Headers: content-type must be the xlsx mime, content-disposition
+	// must carry attachment + a sensible filename.
+	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Errorf("Content-Type = %q, want xlsx mime", ct)
+	}
+	cd := resp.Header.Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment;") || !strings.Contains(cd, ".xlsx") {
+		t.Errorf("Content-Disposition = %q, want attachment with .xlsx filename", cd)
+	}
+	// The body must round-trip as a real xlsx, not an empty file.
+	xf, err := excelize.OpenReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open xlsx: %v (body=%d bytes)", err, len(raw))
+	}
+	defer xf.Close()
+
+	sheet := "配件库存"
+	rows, err := xf.GetRows(sheet)
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	// 1 header + 2 data rows.
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (header + 2); sheet=%+v", len(rows), rows)
+	}
+	// Header sanity.
+	wantHeaders := []string{"名称", "当前库存", "低库存阈值", "备注", "创建时间", "更新时间"}
+	for i, want := range wantHeaders {
+		if i >= len(rows[0]) || rows[0][i] != want {
+			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
+		}
+	}
+
+	// Find each seeded accessory by name. The repo sorts by created_at
+	// DESC, id DESC, so the most recently created row is index 1 and the
+	// older one is index 2 — but we don't rely on order, we look them up
+	// by name.
+	got := map[string]map[string]string{}
+	for _, row := range rows[1:] {
+		if len(row) == 0 {
+			continue
+		}
+		name := row[0]
+		got[name] = map[string]string{
+			"stock":     safeCellFromRow(row, 1),
+			"threshold": safeCellFromRow(row, 2),
+			"notes":     safeCellFromRow(row, 3),
+		}
+	}
+	if g, ok := got["导出-A"]; !ok {
+		t.Errorf("导出-A missing from export")
+	} else {
+		if g["stock"] != "4" {
+			t.Errorf("导出-A stock = %q, want 4", g["stock"])
+		}
+		if g["threshold"] != "5" {
+			t.Errorf("导出-A threshold = %q, want 5 (newAccessory default)", g["threshold"])
+		}
+		if g["notes"] != "A-remark" {
+			t.Errorf("导出-A notes = %q, want A-remark", g["notes"])
+		}
+	}
+	if g, ok := got["导出-B"]; !ok {
+		t.Errorf("导出-B missing from export")
+	} else if g["stock"] != "11" {
+		t.Errorf("导出-B stock = %q, want 11", g["stock"])
+	}
+}
+
+// TestAccessoriesExport_Empty — exporting an empty catalog must still
+// succeed and produce a valid xlsx with just the header row.
+func TestAccessoriesExport_Empty(t *testing.T) {
+	h := newRouter(t)
+
+	resp, raw := httpDo(t, h, http.MethodGet, "/api/v1/accessories/export", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, raw)
+	}
+	xf, err := excelize.OpenReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open xlsx: %v", err)
+	}
+	defer xf.Close()
+	rows, err := xf.GetRows("配件库存")
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (header only); got %+v", len(rows), rows)
+	}
+	if len(rows[0]) != 6 {
+		t.Errorf("header column count = %d, want 6; got %+v", len(rows[0]), rows[0])
+	}
+}
+
+// safeCell returns rows[r][c] or "<missing>" when the cell is absent —
+// keeps failure messages readable when the sheet is malformed.
+func safeCell(rows [][]string, r, c int) string {
+	if r >= len(rows) {
+		return "<missing row>"
+	}
+	return safeCellFromRow(rows[r], c)
+}
+
+func safeCellFromRow(row []string, c int) string {
+	if c >= len(row) {
+		return ""
+	}
+	return row[c]
 }
 
 // --- helpers -------------------------------------------------------------

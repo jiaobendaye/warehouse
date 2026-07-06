@@ -1,10 +1,12 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { useToast } from '../components/Toast';
+import { isWails } from '../api/client';
 import {
   listAccessories,
   createAccessory,
   updateAccessory,
   deleteAccessory,
+  exportAccessories,
   type Accessory,
 } from '../api/accessory';
 
@@ -209,6 +211,38 @@ export default function AccessoryList() {
     }
   };
 
+  // ── export ──
+  // Hits the backend xlsx endpoint, gets a Blob, then triggers a hidden
+  // <a download> click so the browser saves the file. Object URL is
+  // revoked on next tick — well after the click — to keep it valid for
+  // the download to start.
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    if (exporting) return;
+    // GUI 内 WebView 不支持触发浏览器下载，提示用户在浏览器中导出
+    if (isWails()) {
+      showToast('warning', '请在浏览器中打开本应用后再导出文件');
+      return;
+    }
+    setExporting(true);
+    try {
+      const blob = await exportAccessories();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `配件库存_${formatStamp(new Date())}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      showToast('success', '导出已开始');
+    } catch (err: any) {
+      showToast('error', err?.error?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ── modal sections ──
   const createModal = showCreate && (
     <Modal title="新建配件" onClose={() => { setShowCreate(false); resetCreateForm(); }}>
@@ -269,7 +303,12 @@ export default function AccessoryList() {
           />
           <button style={btn} type="submit">搜索</button>
         </form>
-        <button style={btn} onClick={() => setShowCreate(true)}>新建配件</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={btnGray} disabled={exporting} onClick={handleExport}>
+            {exporting ? '导出中…' : '导出'}
+          </button>
+          <button style={btn} onClick={() => setShowCreate(true)}>新建配件</button>
+        </div>
       </div>
 
       {/* table */}
@@ -328,4 +367,13 @@ export default function AccessoryList() {
       {editModal}
     </div>
   );
+}
+
+// formatStamp renders a Date as YYYYMMDD_HHMMSS in local time, mirroring
+// the backend's filename timestamp so the two stay aligned. Used for the
+// xlsx download filename — no timezone math, just local.
+function formatStamp(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
