@@ -46,11 +46,11 @@ export function outbound(cmd: OutboundCmd): Promise<InventoryFlow> {
 }
 
 export function batchInbound(items: InboundCmd[]): Promise<BatchResult> {
-  return apiCall('POST', '/api/v1/stock/batch_inbound', { items });
+  return apiCall('POST', '/api/v1/stock/batch_inbound', items);
 }
 
 export function batchOutbound(items: OutboundCmd[]): Promise<BatchResult> {
-  return apiCall('POST', '/api/v1/stock/batch_outbound', { items });
+  return apiCall('POST', '/api/v1/stock/batch_outbound', items);
 }
 
 // ── File outbound ────────────────────────────────────────────────
