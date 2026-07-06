@@ -6,17 +6,26 @@
 // list. Policy "default" (or "") suggests shortage units; "fixed:N" suggests
 // N units for every short item.
 //
-// replenishment.export streams the same scan result set as an .xlsx file
-// so an LLM agent can hand the file directly to a buyer. The bytes ride
-// inside an EmbeddedResource (Blob), alongside a small TextContent with
-// the row count and filename for human-friendly agent logs.
+// replenishment.export writes the current scan result to an .xlsx file
+// on disk (under Services.ExportsDir) and returns the absolute path,
+// size, sha256, and row count in the structured output. The agent can
+// either read the file directly from the path or hit the existing HTTP
+// /api/v1/replenishment/export endpoint for a fresh download. We
+// deliberately do NOT inline the xlsx bytes (base64 or
+// EmbeddedResource): streamable HTTP is the wrong channel for binary
+// payloads, and the HTTP endpoint is the natural place for that.
 package mcp
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -52,18 +61,19 @@ type batchCheckOutput struct {
 // to specify.
 type replenishmentExportInput struct{}
 
-// replenishmentExportOutput is an empty placeholder. The actual file
-// bytes are returned via *CallToolResult.Content as an EmbeddedResource,
-// not as structured JSON — the SDK requires a generic Out type for the
-// handler signature, so we use an empty struct to satisfy it without
-// promising any structured payload.
-type replenishmentExportOutput struct{}
-
-// replenishmentExportMIME is the standard xlsx MIME used everywhere we
-// serve an xlsx file (HTTP endpoint, MCP tool). Keeping a single
-// constant ensures an agent that switches between HTTP and MCP gets the
-// same content-type it can match on.
-const replenishmentExportMIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+// replenishmentExportOutput describes the .xlsx written by the
+// replenishment.export tool. URL is the absolute download URL of the
+// exact file we just wrote — the agent can fetch the bytes regardless
+// of whether it shares a filesystem with the server. SHA256 lets the
+// agent verify integrity after fetching. RowCount counts data rows
+// only (header excluded).
+type replenishmentExportOutput struct {
+	Filename string `json:"filename" jsonschema:"basename of the xlsx file (e.g. replenishment_20260706_153045.xlsx)"`
+	URL      string `json:"url"      jsonschema:"absolute HTTP(S) URL to GET the exact bytes written (no re-generation); safe to fetch with WebFetch/curl"`
+	RowCount int    `json:"row_count" jsonschema:"number of data rows in the xlsx (header excluded)"`
+	Size     int64  `json:"size"     jsonschema:"file size in bytes"`
+	SHA256   string `json:"sha256"   jsonschema:"lowercase hex sha256 of the file bytes for integrity verification after fetching"`
+}
 
 // replenishmentExportHeaders mirrors the column order in the exported
 // xlsx. Kept in one place so tests can assert against the same strings
@@ -76,7 +86,7 @@ var replenishmentExportHeaders = []string{
 	"建议补货",
 }
 
-func registerReplenishmentTools(srv *mcpsdk.Server, svc *service.ReplenishmentService) {
+func registerReplenishmentTools(srv *mcpsdk.Server, svc *service.ReplenishmentService, exportsDir, publicBaseURL string) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name: "replenishment.scan", Description: "Scan the whole catalog and return every accessory below its low_stock_threshold.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ replenishmentScanInput) (*mcpsdk.CallToolResult, replenishmentScanOutput, error) {
@@ -99,7 +109,7 @@ func registerReplenishmentTools(srv *mcpsdk.Server, svc *service.ReplenishmentSe
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "replenishment.export",
-		Description: "Export the current replenishment scan as an .xlsx file. Returns the bytes as an embedded resource alongside the filename and row count.",
+		Description: "Export the current replenishment scan to an .xlsx file. Returns the absolute download URL, size, sha256, and row_count in the structured output; the URL is the exact bytes written (no re-generation).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ replenishmentExportInput) (*mcpsdk.CallToolResult, replenishmentExportOutput, error) {
 		items, err := svc.Scan(ctx)
 		if err != nil {
@@ -112,25 +122,59 @@ func registerReplenishmentTools(srv *mcpsdk.Server, svc *service.ReplenishmentSe
 		}
 
 		filename := fmt.Sprintf("replenishment_%s.xlsx", time.Now().Format("20060102_150405"))
-		uri := "embedded://replenishment/" + filename
 
-		// Two-part response: a TextContent with a one-line summary (so the
-		// agent can show "exported 12 rows to file X" without parsing the
-		// xlsx), then the file itself as an EmbeddedResource.
+		// Write to ExportsDir. mkdir + write live in one place so a
+		// missing directory is a single error path.
+		if err := os.MkdirAll(exportsDir, 0o755); err != nil {
+			return nil, replenishmentExportOutput{}, fmt.Errorf("mkdir exports dir: %w", err)
+		}
+		path := filepath.Join(exportsDir, filename)
+		if err := os.WriteFile(path, xlsxBytes, 0o644); err != nil {
+			return nil, replenishmentExportOutput{}, fmt.Errorf("write xlsx: %w", err)
+		}
+
+		sum := sha256.Sum256(xlsxBytes)
+		sha := hex.EncodeToString(sum[:])
+
+		// Build the absolute download URL the agent should hit. We
+		// rely on PublicBaseURL being set by main.go to "<scheme>://
+		// <host>:<port>"; empty means the wiring is wrong — surface
+		// that as an error rather than silently returning an
+		// unreachable URL.
+		if publicBaseURL == "" {
+			return nil, replenishmentExportOutput{},
+				fmt.Errorf("public base URL is empty; configure Services.PublicBaseURL")
+		}
+		url := strings.TrimRight(publicBaseURL, "/") + "/api/v1/exports/" + filename
+
+		// One TextContent line for human-friendly logs, plus the file
+		// metadata in structured JSON so the agent can pick the URL
+		// up programmatically. TextContent spells out the URL so an
+		// agent that doesn't introspect structured fields knows where
+		// to fetch.
+		text := fmt.Sprintf(
+			"Exported %d replenishment row(s) to %s (%d bytes, sha256=%s). "+
+				"GET %s to download the exact bytes written; sha256 should match.",
+			len(items), filename, len(xlsxBytes), sha, url,
+		)
 		return &mcpsdk.CallToolResult{
 			Content: []mcpsdk.Content{
-				&mcpsdk.TextContent{
-					Text: fmt.Sprintf("Exported %d replenishment row(s) to %s", len(items), filename),
-				},
-				&mcpsdk.EmbeddedResource{
-					Resource: &mcpsdk.ResourceContents{
-						URI:      uri,
-						MIMEType: replenishmentExportMIME,
-						Blob:     xlsxBytes,
-					},
-				},
+				&mcpsdk.TextContent{Text: text},
 			},
-		}, replenishmentExportOutput{}, nil
+			StructuredContent: map[string]any{
+				"filename":  filename,
+				"url":       url,
+				"row_count": len(items),
+				"size":      int64(len(xlsxBytes)),
+				"sha256":    sha,
+			},
+		}, replenishmentExportOutput{
+			Filename: filename,
+			URL:      url,
+			RowCount: len(items),
+			Size:     int64(len(xlsxBytes)),
+			SHA256:   sha,
+		}, nil
 	})
 }
 

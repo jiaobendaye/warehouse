@@ -50,11 +50,24 @@ const (
 
 // Services bundles the four service handles an MCP server needs. It mirrors
 // api.Services so a single struct can be passed everywhere.
+//
+// ExportsDir is the on-disk directory where the export tools
+// (accessory.export, replenishment.export) write their .xlsx files. The
+// same directory is also served by GET /api/v1/exports/{filename} so
+// the file is reachable over HTTP, not just the filesystem.
+//
+// PublicBaseURL is the externally reachable base URL of the warehouse
+// server (e.g. "http://127.0.0.1:17880"). The export tools use it to
+// compose absolute download URLs in their structured output. Keep them
+// in sync with api.Services.ExportsDir and the listener config in
+// main.go.
 type Services struct {
 	Accessory     *service.AccessoryService
 	Stock         *service.StockService
 	Flow          *service.FlowService
 	Replenishment *service.ReplenishmentService
+	ExportsDir    string
+	PublicBaseURL string
 }
 
 // implementation is the value we pass to mcpsdk.NewServer. It identifies the
@@ -69,10 +82,10 @@ var implementation = &mcpsdk.Implementation{
 func NewServer(svcs Services) *mcpsdk.Server {
 	srv := mcpsdk.NewServer(implementation, nil)
 
-	registerAccessoryTools(srv, svcs.Accessory)
+	registerAccessoryTools(srv, svcs.Accessory, svcs.ExportsDir, svcs.PublicBaseURL)
 	registerStockTools(srv, svcs.Stock)
 	registerFlowTools(srv, svcs.Flow)
-	registerReplenishmentTools(srv, svcs.Replenishment)
+	registerReplenishmentTools(srv, svcs.Replenishment, svcs.ExportsDir, svcs.PublicBaseURL)
 	registerFileOutboundTools(srv, svcs.Stock, svcs.Accessory)
 	registerFileInboundTools(srv, svcs.Stock)
 

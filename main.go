@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"path/filepath"
 
@@ -49,11 +50,15 @@ func main() {
 		Replenishment: service.NewReplenishmentService(accRepo),
 	}
 
+	exportsDir := filepath.Join(logDir, "exports")
+	publicBaseURL := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
+
 	apiHandler := api.NewRouter(api.Services{
 		Accessory:     svcs.Accessory,
 		Stock:         svcs.Stock,
 		Flow:          svcs.Flow,
 		Replenishment: svcs.Replenishment,
+		ExportsDir:    exportsDir,
 	}, api.RouterOptions{})
 
 	mcpSrv := mcp.NewServer(mcp.Services{
@@ -61,6 +66,8 @@ func main() {
 		Stock:         svcs.Stock,
 		Flow:          svcs.Flow,
 		Replenishment: svcs.Replenishment,
+		ExportsDir:    exportsDir,
+		PublicBaseURL: publicBaseURL,
 	})
 	mcpHandler := mcp.Handler(mcpSrv)
 

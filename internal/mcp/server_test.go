@@ -16,10 +16,13 @@ package mcp_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +57,10 @@ func newTestServices(t *testing.T) mcp.Services {
 		Stock:         service.NewStockService(accRepo, flowRepo, d),
 		Flow:          service.NewFlowService(flowRepo),
 		Replenishment: service.NewReplenishmentService(accRepo),
+		ExportsDir:    filepath.Join(dir, "exports"),
+		// Real-looking but unreachable URL — tests assert only on the
+		// shape (scheme/host/port + filename), never dial out.
+		PublicBaseURL: "http://127.0.0.1:17880",
 	}
 }
 
@@ -673,13 +680,15 @@ func TestTool_ReplenishmentScan_ExcludesThresholdZero(t *testing.T) {
 	}
 }
 
-// TestTool_ReplenishmentExport_ReturnsXLSX exercises replenishment.export
+// TestTool_ReplenishmentExport_WritesXLSX exercises replenishment.export
 // end-to-end: seeds an accessory in shortage, calls the tool over the MCP
-// in-memory transport, finds the EmbeddedResource in the result, opens
-// the blob bytes with excelize, and verifies the row layout matches what
-// the HTTP endpoint produces. Also asserts the TextContent header line is
-// present so an agent that ignores the file still sees the summary.
-func TestTool_ReplenishmentExport_ReturnsXLSX(t *testing.T) {
+// in-memory transport, verifies the structured output describes the
+// written file (filename, path, row_count, size, sha256), confirms the
+// file actually exists on disk with a matching sha256, opens it with
+// excelize to validate the row layout, and confirms the TextContent
+// line tells the agent about both retrieval paths (filesystem read and
+// the existing HTTP export endpoint).
+func TestTool_ReplenishmentExport_WritesXLSX(t *testing.T) {
 	svcs := newTestServices(t)
 	srv := mcp.NewServer(svcs)
 	_, session := newInMemoryClient(t, srv)
@@ -705,11 +714,12 @@ func TestTool_ReplenishmentExport_ReturnsXLSX(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("replenishment.export IsError: %+v", res)
 	}
-	if len(res.Content) < 2 {
-		t.Fatalf("expected ≥2 content blocks (text + embedded resource); got %d", len(res.Content))
-	}
 
-	// Block 0 must be the TextContent summary.
+	// Exactly one TextContent block; the file metadata rides in
+	// structured output so any MCP client surfaces it to the model.
+	if len(res.Content) != 1 {
+		t.Fatalf("content blocks = %d, want 1 (TextContent only); got %+v", len(res.Content), res.Content)
+	}
 	tc, ok := res.Content[0].(*mcpsdk.TextContent)
 	if !ok {
 		t.Fatalf("content[0] type = %T, want *mcpsdk.TextContent", res.Content[0])
@@ -720,29 +730,92 @@ func TestTool_ReplenishmentExport_ReturnsXLSX(t *testing.T) {
 	if !strings.Contains(tc.Text, "1 replenishment row") {
 		t.Errorf("summary text = %q, want it to mention '1 replenishment row'", tc.Text)
 	}
+	// The text must also surface the download URL so an agent that
+	// doesn't introspect structured fields knows where to fetch.
+	if !strings.Contains(tc.Text, "/api/v1/exports/") {
+		t.Errorf("summary text = %q, want it to mention the /api/v1/exports/ download URL", tc.Text)
+	}
 
-	// Block 1 must be the EmbeddedResource carrying the xlsx blob.
-	er, ok := res.Content[1].(*mcpsdk.EmbeddedResource)
+	// Structured output: filename, absolute URL, row_count, size, sha256.
+	if res.StructuredContent == nil {
+		t.Fatal("StructuredContent is nil; want {filename, url, row_count, size, sha256}")
+	}
+	sc, ok := res.StructuredContent.(map[string]any)
 	if !ok {
-		t.Fatalf("content[1] type = %T, want *mcpsdk.EmbeddedResource", res.Content[1])
+		t.Fatalf("StructuredContent type = %T, want map[string]any", res.StructuredContent)
 	}
-	if er.Resource == nil {
-		t.Fatal("EmbeddedResource.Resource is nil")
+	gotFilename, _ := sc["filename"].(string)
+	if !strings.HasPrefix(gotFilename, "replenishment_") || !strings.HasSuffix(gotFilename, ".xlsx") {
+		t.Errorf("StructuredContent.filename = %q, want replenishment_*.xlsx", gotFilename)
 	}
-	if er.Resource.MIMEType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
-		t.Errorf("MIMEType = %q, want xlsx mime", er.Resource.MIMEType)
+	gotURL, _ := sc["url"].(string)
+	wantURLSuffix := "/api/v1/exports/" + gotFilename
+	if !strings.HasSuffix(gotURL, wantURLSuffix) {
+		t.Errorf("StructuredContent.url = %q, want it to end with %q", gotURL, wantURLSuffix)
 	}
-	if !strings.HasPrefix(er.Resource.URI, "embedded://replenishment/replenishment_") {
-		t.Errorf("URI = %q, want embedded://replenishment/replenishment_*.xlsx", er.Resource.URI)
+	if !strings.HasPrefix(gotURL, "http://") && !strings.HasPrefix(gotURL, "https://") {
+		t.Errorf("StructuredContent.url = %q, want it to start with http:// or https://", gotURL)
 	}
-	if len(er.Resource.Blob) == 0 {
-		t.Fatal("EmbeddedResource.Blob is empty")
+	if !strings.Contains(tc.Text, gotURL) {
+		t.Errorf("TextContent should mention the same URL as StructuredContent (url=%q)", gotURL)
+	}
+	rowCount, ok := sc["row_count"].(int64)
+	if !ok {
+		// Some transports decode numbers as float64 — handle both.
+		if f, fok := sc["row_count"].(float64); fok {
+			rowCount = int64(f)
+		} else {
+			t.Fatalf("StructuredContent.row_count type = %T, want number", sc["row_count"])
+		}
+	}
+	if rowCount != 1 {
+		t.Errorf("StructuredContent.row_count = %d, want 1", rowCount)
+	}
+	gotSize, ok := sc["size"].(int64)
+	if !ok {
+		if f, fok := sc["size"].(float64); fok {
+			gotSize = int64(f)
+		} else {
+			t.Fatalf("StructuredContent.size type = %T, want number", sc["size"])
+		}
+	}
+	if gotSize <= 0 {
+		t.Errorf("StructuredContent.size = %d, want > 0", gotSize)
+	}
+	gotSHA, _ := sc["sha256"].(string)
+	if len(gotSHA) != 64 {
+		t.Fatalf("StructuredContent.sha256 = %q (len=%d), want 64-char hex", gotSHA, len(gotSHA))
+	}
+	if _, err := hex.DecodeString(gotSHA); err != nil {
+		t.Fatalf("StructuredContent.sha256 = %q is not valid hex: %v", gotSHA, err)
 	}
 
-	// The blob must round-trip as a real xlsx with the expected rows.
-	xf, err := excelize.OpenReader(bytes.NewReader(er.Resource.Blob))
+	// The URL must point at a file that actually exists on disk and
+	// whose sha256/size match the structured output — otherwise the
+	// agent would fetch a 404 or get tampered bytes. We resolve the
+	// URL to a local path the same way the HTTP handler does.
+	onDiskPath := filepath.Join(svcs.ExportsDir, gotFilename)
+	info, err := os.Stat(onDiskPath)
 	if err != nil {
-		t.Fatalf("open xlsx from blob: %v (blob=%d bytes)", err, len(er.Resource.Blob))
+		t.Fatalf("stat %q: %v", onDiskPath, err)
+	}
+	if info.Size() != gotSize {
+		t.Errorf("file size = %d, StructuredContent.size = %d", info.Size(), gotSize)
+	}
+	onDisk, err := os.ReadFile(onDiskPath)
+	if err != nil {
+		t.Fatalf("read file %q: %v", onDiskPath, err)
+	}
+	sum := sha256.Sum256(onDisk)
+	if hex.EncodeToString(sum[:]) != gotSHA {
+		t.Errorf("file sha256 mismatch: on-disk=%x, StructuredContent.sha256=%s", sum, gotSHA)
+	}
+
+	// The on-disk file must round-trip as a real xlsx with the
+	// expected rows.
+	xf, err := excelize.OpenReader(bytes.NewReader(onDisk))
+	if err != nil {
+		t.Fatalf("open xlsx from on-disk file: %v (size=%d bytes)", err, len(onDisk))
 	}
 	defer xf.Close()
 	rows, err := xf.GetRows("告急补货")
@@ -778,15 +851,16 @@ func safeCell(rows [][]string, r, c int) string {
 	return rows[r][c]
 }
 
-// TestTool_AccessoryExport_ReturnsXLSX exercises accessory.export
+// TestTool_AccessoryExport_WritesXLSX exercises accessory.export
 // end-to-end: seeds two accessories (with stock and notes set so each
 // column has something to assert), calls the tool over the MCP
-// in-memory transport, finds the EmbeddedResource in the result, opens
-// the blob bytes with excelize, and verifies the row layout matches
-// what the HTTP endpoint produces. Also asserts the TextContent header
-// line is present so an agent that ignores the file still sees the
-// summary.
-func TestTool_AccessoryExport_ReturnsXLSX(t *testing.T) {
+// in-memory transport, verifies the structured output describes the
+// written file (filename, path, row_count, size, sha256), confirms the
+// file actually exists on disk with a matching sha256, opens it with
+// excelize to validate the row layout, and confirms the TextContent
+// line tells the agent about both retrieval paths (filesystem read and
+// the existing HTTP export endpoint).
+func TestTool_AccessoryExport_WritesXLSX(t *testing.T) {
 	svcs := newTestServices(t)
 	srv := mcp.NewServer(svcs)
 	_, session := newInMemoryClient(t, srv)
@@ -818,11 +892,12 @@ func TestTool_AccessoryExport_ReturnsXLSX(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("accessory.export IsError: %+v", res)
 	}
-	if len(res.Content) < 2 {
-		t.Fatalf("expected ≥2 content blocks (text + embedded resource); got %d", len(res.Content))
-	}
 
-	// Block 0 must be the TextContent summary.
+	// Exactly one TextContent block; the file metadata rides in
+	// structured output so any MCP client surfaces it to the model.
+	if len(res.Content) != 1 {
+		t.Fatalf("content blocks = %d, want 1 (TextContent only); got %+v", len(res.Content), res.Content)
+	}
 	tc, ok := res.Content[0].(*mcpsdk.TextContent)
 	if !ok {
 		t.Fatalf("content[0] type = %T, want *mcpsdk.TextContent", res.Content[0])
@@ -833,29 +908,92 @@ func TestTool_AccessoryExport_ReturnsXLSX(t *testing.T) {
 	if !strings.Contains(tc.Text, "2 accessor") {
 		t.Errorf("summary text = %q, want it to mention '2 accessor'", tc.Text)
 	}
+	// The text must also surface the download URL so an agent that
+	// doesn't introspect structured fields knows where to fetch.
+	if !strings.Contains(tc.Text, "/api/v1/exports/") {
+		t.Errorf("summary text = %q, want it to mention the /api/v1/exports/ download URL", tc.Text)
+	}
 
-	// Block 1 must be the EmbeddedResource carrying the xlsx blob.
-	er, ok := res.Content[1].(*mcpsdk.EmbeddedResource)
+	// Structured output: filename, absolute URL, row_count, size, sha256.
+	if res.StructuredContent == nil {
+		t.Fatal("StructuredContent is nil; want {filename, url, row_count, size, sha256}")
+	}
+	sc, ok := res.StructuredContent.(map[string]any)
 	if !ok {
-		t.Fatalf("content[1] type = %T, want *mcpsdk.EmbeddedResource", res.Content[1])
+		t.Fatalf("StructuredContent type = %T, want map[string]any", res.StructuredContent)
 	}
-	if er.Resource == nil {
-		t.Fatal("EmbeddedResource.Resource is nil")
+	gotFilename, _ := sc["filename"].(string)
+	if !strings.HasPrefix(gotFilename, "accessories_") || !strings.HasSuffix(gotFilename, ".xlsx") {
+		t.Errorf("StructuredContent.filename = %q, want accessories_*.xlsx", gotFilename)
 	}
-	if er.Resource.MIMEType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
-		t.Errorf("MIMEType = %q, want xlsx mime", er.Resource.MIMEType)
+	gotURL, _ := sc["url"].(string)
+	wantURLSuffix := "/api/v1/exports/" + gotFilename
+	if !strings.HasSuffix(gotURL, wantURLSuffix) {
+		t.Errorf("StructuredContent.url = %q, want it to end with %q", gotURL, wantURLSuffix)
 	}
-	if !strings.HasPrefix(er.Resource.URI, "embedded://accessory/accessories_") {
-		t.Errorf("URI = %q, want embedded://accessory/accessories_*.xlsx", er.Resource.URI)
+	if !strings.HasPrefix(gotURL, "http://") && !strings.HasPrefix(gotURL, "https://") {
+		t.Errorf("StructuredContent.url = %q, want it to start with http:// or https://", gotURL)
 	}
-	if len(er.Resource.Blob) == 0 {
-		t.Fatal("EmbeddedResource.Blob is empty")
+	if !strings.Contains(tc.Text, gotURL) {
+		t.Errorf("TextContent should mention the same URL as StructuredContent (url=%q)", gotURL)
+	}
+	rowCount, ok := sc["row_count"].(int64)
+	if !ok {
+		// Some transports decode numbers as float64 — handle both.
+		if f, fok := sc["row_count"].(float64); fok {
+			rowCount = int64(f)
+		} else {
+			t.Fatalf("StructuredContent.row_count type = %T, want number", sc["row_count"])
+		}
+	}
+	if rowCount != 2 {
+		t.Errorf("StructuredContent.row_count = %d, want 2", rowCount)
+	}
+	gotSize, ok := sc["size"].(int64)
+	if !ok {
+		if f, fok := sc["size"].(float64); fok {
+			gotSize = int64(f)
+		} else {
+			t.Fatalf("StructuredContent.size type = %T, want number", sc["size"])
+		}
+	}
+	if gotSize <= 0 {
+		t.Errorf("StructuredContent.size = %d, want > 0", gotSize)
+	}
+	gotSHA, _ := sc["sha256"].(string)
+	if len(gotSHA) != 64 {
+		t.Fatalf("StructuredContent.sha256 = %q (len=%d), want 64-char hex", gotSHA, len(gotSHA))
+	}
+	if _, err := hex.DecodeString(gotSHA); err != nil {
+		t.Fatalf("StructuredContent.sha256 = %q is not valid hex: %v", gotSHA, err)
 	}
 
-	// The blob must round-trip as a real xlsx with the expected rows.
-	xf, err := excelize.OpenReader(bytes.NewReader(er.Resource.Blob))
+	// The URL must point at a file that actually exists on disk and
+	// whose sha256/size match the structured output — otherwise the
+	// agent would fetch a 404 or get tampered bytes. We resolve the
+	// URL to a local path the same way the HTTP handler does.
+	onDiskPath := filepath.Join(svcs.ExportsDir, gotFilename)
+	info, err := os.Stat(onDiskPath)
 	if err != nil {
-		t.Fatalf("open xlsx from blob: %v (blob=%d bytes)", err, len(er.Resource.Blob))
+		t.Fatalf("stat %q: %v", onDiskPath, err)
+	}
+	if info.Size() != gotSize {
+		t.Errorf("file size = %d, StructuredContent.size = %d", info.Size(), gotSize)
+	}
+	onDisk, err := os.ReadFile(onDiskPath)
+	if err != nil {
+		t.Fatalf("read file %q: %v", onDiskPath, err)
+	}
+	sum := sha256.Sum256(onDisk)
+	if hex.EncodeToString(sum[:]) != gotSHA {
+		t.Errorf("file sha256 mismatch: on-disk=%x, StructuredContent.sha256=%s", sum, gotSHA)
+	}
+
+	// The on-disk file must round-trip as a real xlsx with the
+	// expected rows.
+	xf, err := excelize.OpenReader(bytes.NewReader(onDisk))
+	if err != nil {
+		t.Fatalf("open xlsx from on-disk file: %v (size=%d bytes)", err, len(onDisk))
 	}
 	defer xf.Close()
 	rows, err := xf.GetRows("配件库存")

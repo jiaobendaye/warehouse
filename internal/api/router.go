@@ -10,11 +10,17 @@ import (
 
 // Services bundles the four service handles a router needs. Construct it
 // once at startup and pass it to NewRouter.
+//
+// ExportsDir is the directory the MCP export tools (and any future
+// internal exporter) write .xlsx files to; the /api/v1/exports/{name}
+// endpoint serves them back. Leaving it empty disables that endpoint —
+// callers that never wire the MCP export tools can omit it.
 type Services struct {
 	Accessory     *service.AccessoryService
 	Stock         *service.StockService
 	Flow          *service.FlowService
 	Replenishment *service.ReplenishmentService
+	ExportsDir    string
 }
 
 // RouterOptions controls cross-cutting middleware (currently just CORS).
@@ -67,6 +73,15 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 		r.Get("/replenishment/scan", rpl.Scan)
 		r.Post("/replenishment/check", rpl.Check)
 		r.Get("/replenishment/export", rpl.Export)
+
+		// On-disk exports produced by the MCP export tools (and any
+		// future internal exporter). Skipped when ExportsDir is empty
+		// so test setups that don't care about this surface don't have
+		// to fabricate a temp dir.
+		if s.ExportsDir != "" {
+			exp := NewExportsHandler(s.ExportsDir)
+			r.Get("/exports/{filename}", exp.ServeHTTP)
+		}
 	})
 
 	return r
