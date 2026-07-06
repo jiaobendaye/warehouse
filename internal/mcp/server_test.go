@@ -6,7 +6,7 @@
 //   - TranslateError maps the four service sentinels to the JSON-RPC codes
 //     documented in the spec (NOT_FOUND=-32004, CONFLICT=-32005,
 //     BAD_REQUEST=-32600).
-//   - tools/list returns exactly the 17 tools named in the spec.
+//   - tools/list returns exactly the 18 tools named in the spec.
 //   - tool calls exercise the underlying service methods, with both happy
 //     paths and error paths, and surface the right JSON-RPC error codes on
 //     failure.
@@ -125,10 +125,10 @@ func TestTranslateError_WrappedSentinels(t *testing.T) {
 }
 
 // ------------------------------------------------------------------
-// tools/list — 17 tools exactly
+// tools/list — 18 tools exactly
 // ------------------------------------------------------------------
 
-func TestToolsList_AllSixteen(t *testing.T) {
+func TestToolsList_All(t *testing.T) {
 	svcs := newTestServices(t)
 	srv := mcp.NewServer(svcs)
 
@@ -151,6 +151,7 @@ func TestToolsList_AllSixteen(t *testing.T) {
 		"accessory.create",
 		"accessory.update",
 		"accessory.delete",
+		"accessory.export",
 		"stock.inbound",
 		"stock.outbound",
 		"stock.batch_inbound",
@@ -500,8 +501,8 @@ func TestStdioRoundtrip_Minimal(t *testing.T) {
 		t.Fatalf("want result, got %v", resp)
 	}
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 17 {
-		t.Fatalf("want 17 tools, got %d", len(tools))
+	if len(tools) != 18 {
+		t.Fatalf("want 18 tools, got %d", len(tools))
 	}
 
 	// Shutdown: close client-side writer; cancel context.
@@ -775,6 +776,139 @@ func safeCell(rows [][]string, r, c int) string {
 		return ""
 	}
 	return rows[r][c]
+}
+
+// TestTool_AccessoryExport_ReturnsXLSX exercises accessory.export
+// end-to-end: seeds two accessories (with stock and notes set so each
+// column has something to assert), calls the tool over the MCP
+// in-memory transport, finds the EmbeddedResource in the result, opens
+// the blob bytes with excelize, and verifies the row layout matches
+// what the HTTP endpoint produces. Also asserts the TextContent header
+// line is present so an agent that ignores the file still sees the
+// summary.
+func TestTool_AccessoryExport_ReturnsXLSX(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// Seed two accessories; the second one gets a stock inbound and a
+	// notes patch so every cell of the row has something verifiable.
+	createAccessoryViaMCP(t, session, "MCP-EXPORT-A", 5)
+	b := createAccessoryViaMCP(t, session, "MCP-EXPORT-B", 7)
+	if _, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": b.ID, "quantity": 3},
+	}); err != nil {
+		t.Fatalf("stock.inbound: %v", err)
+	}
+	if _, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "accessory.update", Arguments: map[string]any{"id": b.ID, "notes": "B-remark"},
+	}); err != nil {
+		t.Fatalf("accessory.update: %v", err)
+	}
+
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "accessory.export", Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("accessory.export: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("accessory.export IsError: %+v", res)
+	}
+	if len(res.Content) < 2 {
+		t.Fatalf("expected ≥2 content blocks (text + embedded resource); got %d", len(res.Content))
+	}
+
+	// Block 0 must be the TextContent summary.
+	tc, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("content[0] type = %T, want *mcpsdk.TextContent", res.Content[0])
+	}
+	if !strings.Contains(tc.Text, "accessories_") || !strings.Contains(tc.Text, ".xlsx") {
+		t.Errorf("summary text = %q, want it to mention filename and .xlsx", tc.Text)
+	}
+	if !strings.Contains(tc.Text, "2 accessor") {
+		t.Errorf("summary text = %q, want it to mention '2 accessor'", tc.Text)
+	}
+
+	// Block 1 must be the EmbeddedResource carrying the xlsx blob.
+	er, ok := res.Content[1].(*mcpsdk.EmbeddedResource)
+	if !ok {
+		t.Fatalf("content[1] type = %T, want *mcpsdk.EmbeddedResource", res.Content[1])
+	}
+	if er.Resource == nil {
+		t.Fatal("EmbeddedResource.Resource is nil")
+	}
+	if er.Resource.MIMEType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Errorf("MIMEType = %q, want xlsx mime", er.Resource.MIMEType)
+	}
+	if !strings.HasPrefix(er.Resource.URI, "embedded://accessory/accessories_") {
+		t.Errorf("URI = %q, want embedded://accessory/accessories_*.xlsx", er.Resource.URI)
+	}
+	if len(er.Resource.Blob) == 0 {
+		t.Fatal("EmbeddedResource.Blob is empty")
+	}
+
+	// The blob must round-trip as a real xlsx with the expected rows.
+	xf, err := excelize.OpenReader(bytes.NewReader(er.Resource.Blob))
+	if err != nil {
+		t.Fatalf("open xlsx from blob: %v (blob=%d bytes)", err, len(er.Resource.Blob))
+	}
+	defer xf.Close()
+	rows, err := xf.GetRows("配件库存")
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (header + 2 data); got %+v", len(rows), rows)
+	}
+	wantHeaders := []string{"名称", "当前库存", "低库存阈值", "备注", "创建时间", "更新时间"}
+	for i, want := range wantHeaders {
+		if i >= len(rows[0]) || rows[0][i] != want {
+			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
+		}
+	}
+
+	// Look up each seeded accessory by name — order is repo-defined, so
+	// don't rely on row index.
+	got := map[string]map[string]string{}
+	for _, row := range rows[1:] {
+		if len(row) == 0 {
+			continue
+		}
+		got[row[0]] = map[string]string{
+			"stock":     safeCell(rows, indexOf(rows, row[0]), 1),
+			"threshold": safeCell(rows, indexOf(rows, row[0]), 2),
+			"notes":     safeCell(rows, indexOf(rows, row[0]), 3),
+		}
+	}
+	if _, ok := got["MCP-EXPORT-A"]; !ok {
+		t.Errorf("MCP-EXPORT-A missing from export")
+	}
+	if _, ok := got["MCP-EXPORT-B"]; !ok {
+		t.Errorf("MCP-EXPORT-B missing from export")
+	}
+	if g := got["MCP-EXPORT-B"]; g["stock"] != "3" {
+		t.Errorf("MCP-EXPORT-B stock = %q, want 3", g["stock"])
+	}
+	if g := got["MCP-EXPORT-B"]; g["notes"] != "B-remark" {
+		t.Errorf("MCP-EXPORT-B notes = %q, want B-remark", g["notes"])
+	}
+}
+
+// indexOf returns the index of the first row whose first cell equals
+// name, or -1 if not found. Used to translate a map keyed by accessory
+// name back to its row index in the sheet.
+func indexOf(rows [][]string, name string) int {
+	for i, row := range rows {
+		if len(row) > 0 && row[0] == name {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestTool_AccessoryGet_ByName(t *testing.T) {

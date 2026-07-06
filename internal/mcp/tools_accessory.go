@@ -5,13 +5,23 @@
 // decodes args via the SDK (which validates against the schema) and then
 // delegates to the service. Errors are translated to JSON-RPC error codes
 // per the contract in TranslateError.
+//
+// accessory.export streams the whole catalog as an .xlsx file so an LLM
+// agent can hand the file directly to a buyer. The bytes ride inside an
+// EmbeddedResource (Blob), alongside a small TextContent with the
+// filename + row count for human-friendly agent logs.
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/jiaobendaye/warehouse/internal/domain"
 	"github.com/jiaobendaye/warehouse/internal/service"
@@ -59,6 +69,36 @@ type accessoryDeleteInput struct {
 // accessoryDeleteOutput is the small success envelope for delete.
 type accessoryDeleteOutput struct {
 	Deleted int64 `json:"deleted"`
+}
+
+// accessoryExportInput is empty; the tool always exports the whole
+// catalog, mirroring the HTTP /api/v1/accessories/export endpoint
+// (no q filter, no pagination).
+type accessoryExportInput struct{}
+
+// accessoryExportOutput is an empty placeholder. The actual file bytes
+// are returned via *CallToolResult.Content as an EmbeddedResource, not
+// as structured JSON — the SDK requires a generic Out type for the
+// handler signature, so we use an empty struct to satisfy it without
+// promising any structured payload.
+type accessoryExportOutput struct{}
+
+// accessoryExportMIME is the standard xlsx MIME used everywhere we
+// serve an xlsx file (HTTP endpoint, MCP tool). Keeping a single
+// constant ensures an agent that switches between HTTP and MCP gets the
+// same content-type it can match on.
+const accessoryExportMIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+// accessoriesExportHeaders mirrors the column order in the exported
+// xlsx. Kept in one place so tests can assert against the same strings
+// the build writes.
+var accessoriesExportHeaders = []string{
+	"名称",
+	"当前库存",
+	"低库存阈值",
+	"备注",
+	"创建时间",
+	"更新时间",
 }
 
 func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
@@ -136,4 +176,102 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService) {
 		}
 		return nil, accessoryDeleteOutput{Deleted: in.ID}, nil
 	})
+
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "accessory.export",
+		Description: "Export the entire accessory catalog as an .xlsx file. Returns the bytes as an embedded resource alongside the filename and row count.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ accessoryExportInput) (*mcpsdk.CallToolResult, accessoryExportOutput, error) {
+		// Ask for a million rows so the service's internal upper-bound
+		// takes effect rather than the default page size. Same trick the
+		// HTTP handler uses to signal "give me everything" without
+		// adding a new service method.
+		const unlimitedPage = 1_000_000
+		rows, _, err := svc.List(ctx, "", unlimitedPage, 0)
+		if err != nil {
+			return nil, accessoryExportOutput{}, rpcError(err)
+		}
+
+		xlsxBytes, err := buildAccessoriesExportXLSX(rows)
+		if err != nil {
+			return nil, accessoryExportOutput{}, fmt.Errorf("build xlsx: %w", err)
+		}
+
+		filename := fmt.Sprintf("accessories_%s.xlsx", time.Now().Format("20060102_150405"))
+		uri := "embedded://accessory/" + filename
+
+		// Two-part response: a TextContent with a one-line summary (so
+		// the agent can show "exported 12 rows to file X" without
+		// parsing the xlsx), then the file itself as an
+		// EmbeddedResource.
+		return &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{
+				&mcpsdk.TextContent{
+					Text: fmt.Sprintf("Exported %d accessor(ies) to %s", len(rows), filename),
+				},
+				&mcpsdk.EmbeddedResource{
+					Resource: &mcpsdk.ResourceContents{
+						URI:      uri,
+						MIMEType: accessoryExportMIME,
+						Blob:     xlsxBytes,
+					},
+				},
+			},
+		}, accessoryExportOutput{}, nil
+	})
+}
+
+// buildAccessoriesExportXLSX writes the catalog to an in-memory xlsx
+// and returns the encoded bytes. Sheet name is "配件库存" — matches the
+// HTTP export endpoint's sheet name and the inbound convention of
+// using Chinese sheet names for human-facing spreadsheets.
+//
+// The build logic mirrors the api handler's buildAccessoriesXLSX. It
+// is duplicated here (rather than imported across package boundaries)
+// because the xlsx shape is small and the api package depends on
+// internal types the mcp package shouldn't have to reach for.
+func buildAccessoriesExportXLSX(rows []domain.Accessory) ([]byte, error) {
+	xf := excelize.NewFile()
+	defer xf.Close()
+
+	sheet := "配件库存"
+	if _, err := xf.NewSheet(sheet); err != nil {
+		return nil, fmt.Errorf("new sheet: %w", err)
+	}
+	// excelize creates a default Sheet1; drop it so the file has only
+	// our sheet and isn't littered with an empty placeholder.
+	if err := xf.DeleteSheet("Sheet1"); err != nil {
+		return nil, fmt.Errorf("delete Sheet1: %w", err)
+	}
+
+	for c, h := range accessoriesExportHeaders {
+		cell, _ := excelize.CoordinatesToCellName(c+1, 1)
+		if err := xf.SetCellValue(sheet, cell, h); err != nil {
+			return nil, fmt.Errorf("set header %s: %w", cell, err)
+		}
+	}
+	// excelize coords are 1-indexed; row 1 is the header, so the first
+	// data row is row 2.
+	for i, a := range rows {
+		row := i + 2
+		values := []any{
+			a.Name,
+			a.CurrentStock,
+			a.LowStockThreshold,
+			a.Notes,
+			a.CreatedAt,
+			a.UpdatedAt,
+		}
+		for c, v := range values {
+			cell, _ := excelize.CoordinatesToCellName(c+1, row)
+			if err := xf.SetCellValue(sheet, cell, v); err != nil {
+				return nil, fmt.Errorf("set row %d cell %s: %w", row, cell, err)
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := xf.Write(&buf); err != nil {
+		return nil, fmt.Errorf("write xlsx: %w", err)
+	}
+	return buf.Bytes(), nil
 }
