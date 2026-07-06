@@ -37,7 +37,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function Outbound() {
   const { showToast } = useToast();
   const [accessories, setAccessories] = useState<Accessory[]>([]);
-  const [mode, setMode] = useState<'single' | 'batch' | 'file'>('single');
+  const [mode, setMode] = useState<'single' | 'batch' | 'file'>('file');
 
   // ── single mode ──
   const [sAccId, setSAccId] = useState<number | ''>('');
@@ -203,9 +203,9 @@ export default function Outbound() {
     <div>
       <h2 style={{ margin: '0 0 12px' }}>出库</h2>
       <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+        <button style={mode === 'file' ? btn : btnGray} onClick={() => setMode('file')}>文件出库</button>
         <button style={mode === 'single' ? btn : btnGray} onClick={() => setMode('single')}>单笔出库</button>
         <button style={mode === 'batch' ? btn : btnGray} onClick={() => setMode('batch')}>批量出库</button>
-        <button style={mode === 'file' ? btn : btnGray} onClick={() => setMode('file')}>文件出库</button>
       </div>
 
       {mode === 'single' && (
