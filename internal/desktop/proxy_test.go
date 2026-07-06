@@ -175,17 +175,31 @@ func TestSPAHandler_ForwardsAPIPaths(t *testing.T) {
 	assets := memFS(t, "<html></html>", "")
 	h := NewSPAHandler(func() string { return backendAddr(backend) }, assets)
 
-	for _, p := range []string{"/api/v1/accessories", "/mcp/sse", "/healthz"} {
-		t.Run(p, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, p, nil)
+	cases := []struct{ name, method, path string }{
+		{"GET accessories", http.MethodGet, "/api/v1/accessories"},
+		{"POST file_inbound", http.MethodPost, "/api/v1/stock/file_inbound"},
+		{"POST file_outbound", http.MethodPost, "/api/v1/stock/file_outbound"},
+		{"POST stock inbound", http.MethodPost, "/api/v1/stock/inbound"},
+		{"PATCH accessory", http.MethodPatch, "/api/v1/accessories/1"},
+		{"DELETE accessory", http.MethodDelete, "/api/v1/accessories/1"},
+		{"PUT fallback", http.MethodPut, "/api/v1/stock/inbound"},
+		{"GET mcp sse", http.MethodGet, "/mcp/sse"},
+		{"POST mcp messages", http.MethodPost, "/mcp/messages"},
+		{"GET healthz", http.MethodGet, "/healthz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, req)
 
 			if rr.Code != http.StatusOK {
-				t.Fatalf("status = %d, want 200", rr.Code)
+				t.Fatalf("status = %d, want 200; body=%q", rr.Code, rr.Body.String())
 			}
-			if !strings.Contains(rr.Body.String(), p) {
-				t.Errorf("backend didn't see %s; body=%q", p, rr.Body.String())
+			// Backend echoes "METHOD PATH" — assert the request reached it.
+			want := tc.method + " " + tc.path
+			if !strings.Contains(rr.Body.String(), want) {
+				t.Errorf("backend didn't see %s; body=%q", want, rr.Body.String())
 			}
 		})
 	}

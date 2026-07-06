@@ -134,24 +134,25 @@ type spaHandler struct {
 }
 
 func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Wails only sends us requests that the embed.FS couldn't satisfy.
-	// For non-GET, return 405 — the embedded HTTP server doesn't accept
-	// these on SPA paths anyway, and Wails itself rejects them upstream
-	// for non-asset requests.
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Non-GET could conceivably target the API; if so, let the proxy try.
-	if r.Method != http.MethodGet && shouldProxyPath(r.URL.Path) {
-		h.proxy.ServeHTTP(w, r)
-		return
-	}
-
-	// /api, /mcp, /healthz reach the embedded HTTP server via the proxy.
+	// /api, /mcp, /healthz reach the embedded HTTP server via the proxy
+	// regardless of HTTP method. Wails only forwards a request here when
+	// embed.FS couldn't satisfy it, so by construction the path is not a
+	// static asset — POST/PUT/PATCH/DELETE to the REST API must reach the
+	// backend. This must run BEFORE the non-GET 405 below, otherwise any
+	// POST to /api/* (e.g. file_inbound) is short-circuited by Wails with
+	// 405 and the Go server never sees the request — explaining why GUI
+	// file uploads return 405 while the server logs nothing.
 	if shouldProxyPath(r.URL.Path) {
 		h.proxy.ServeHTTP(w, r)
+		return
+	}
+
+	// Anything else here is an SPA path. Wails only invokes us for
+	// non-asset requests, so serving index.html for GET/HEAD is the
+	// SPA-fallback contract; for other methods we 405 since the embed
+	// server doesn't accept them on SPA paths anyway.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 

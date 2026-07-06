@@ -546,6 +546,146 @@ func (s *StockService) FileForceOutbound(ctx context.Context, items []FileOutbou
 	return result, nil
 }
 
+// FileInboundItem is one [name, qty] line from a parsed xlsx.
+type FileInboundItem struct {
+	Name     string `json:"name"`
+	Quantity int64  `json:"quantity"`
+}
+
+// FileInboundResult summarises a file-based batch inbound.
+//
+// CreatedNames is parallel to Flows and marks which rows created a
+// brand-new accessory row (true) vs which used an existing one. The
+// HTTP layer uses it to show "新建 N 种" in the toast.
+type FileInboundResult struct {
+	Inbound     int                    `json:"inbound"`
+	Created     int                    `json:"created"`
+	Flows       []domain.InventoryFlow `json:"flows"`
+	IDs         []int64                `json:"ids"`
+	CreatedNames []bool                `json:"created_names"`
+}
+
+// FileInbound executes a batch inbound driven by name+quantity pairs
+// from a parsed xlsx. For each row:
+//
+//   - If the accessory exists, its current_stock is incremented.
+//   - If it does not exist, a new row is created with stock=0 and the
+//     inbound flow is recorded against it (so the new row's
+//     balance_after equals the inbound quantity).
+//
+// All rows run under a single transaction. Any DB error rolls every
+// adjustment back, so partial commits are impossible.
+//
+// Same-name rows in the input are *not* deduped here — parseXlsxInbound
+// already aggregates them. Duplicate AccessoryID is therefore
+// impossible at this layer, and the BatchInbound-style "duplicate
+// accessory_id" precheck is not needed.
+func (s *StockService) FileInbound(ctx context.Context, items []FileInboundItem) (FileInboundResult, error) {
+	if len(items) == 0 {
+		return FileInboundResult{}, fmt.Errorf("%w: batch must not be empty", ErrInvalidInput)
+	}
+	// Trim names here too, not just in the parser, so direct service
+	// callers (e.g. MCP) get the same whitespace handling as HTTP.
+	trimmed := make([]FileInboundItem, len(items))
+	for i, it := range items {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			return FileInboundResult{}, fmt.Errorf("%w: row %d: name is required", ErrInvalidInput, i)
+		}
+		if it.Quantity <= 0 {
+			return FileInboundResult{}, fmt.Errorf("%w: row %d: quantity must be positive", ErrInvalidInput, i)
+		}
+		trimmed[i] = FileInboundItem{Name: name, Quantity: it.Quantity}
+	}
+	items = trimmed
+
+	// Pre-resolve every name → accessory, creating missing ones. This
+	// mirrors FileForceOutbound so the per-row tx logic is uniform.
+	type row struct {
+		acc     domain.Accessory
+		qty     int64
+		created bool
+	}
+	rows := make([]row, len(items))
+	createdCount := 0
+
+	for i, it := range items {
+		a, err := s.acc.GetByName(ctx, it.Name)
+		if errors.Is(err, repo.ErrNotFound) {
+			a, err = s.acc.Create(ctx, domain.Accessory{Name: it.Name, LowStockThreshold: 0})
+			if err != nil {
+				return FileInboundResult{}, fmt.Errorf("row %d create %q: %w", i, it.Name, err)
+			}
+			createdCount++
+			rows[i].created = true
+		} else if err != nil {
+			return FileInboundResult{}, fmt.Errorf("row %d lookup %q: %w", i, it.Name, err)
+		}
+		rows[i].acc = a
+		rows[i].qty = it.Quantity
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return FileInboundResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result := FileInboundResult{
+		Inbound:      len(items),
+		Created:      createdCount,
+		Flows:        make([]domain.InventoryFlow, 0, len(items)),
+		IDs:          make([]int64, 0, len(items)),
+		CreatedNames: make([]bool, len(items)),
+	}
+
+	for i, r := range rows {
+		// Re-read stock inside the tx for correctness. The pre-tx
+		// read above may be stale if another writer touched the
+		// row between GetByName and BeginTx.
+		cur, err := s.acc.GetStockTx(ctx, tx, r.acc.ID)
+		if err != nil {
+			return FileInboundResult{}, fmt.Errorf("row %d get stock: %w", i, err)
+		}
+		newStock := cur + r.qty
+		if err := s.acc.SetStock(ctx, tx, r.acc.ID, newStock); err != nil {
+			return FileInboundResult{}, fmt.Errorf("row %d set stock: %w", i, err)
+		}
+
+		flow := domain.InventoryFlow{
+			AccessoryID:  r.acc.ID,
+			Type:         domain.FlowTypeIn,
+			Quantity:     r.qty,
+			BalanceAfter: newStock,
+			Remark:       "文件批量入库",
+		}
+		if err := flow.Validate(); err != nil {
+			return FileInboundResult{}, fmt.Errorf("row %d validate flow: %w", i, err)
+		}
+		id, err := s.flow.Insert(ctx, tx, flow)
+		if err != nil {
+			return FileInboundResult{}, fmt.Errorf("row %d insert flow: %w", i, err)
+		}
+		flow.ID = id
+		result.Flows = append(result.Flows, flow)
+		result.IDs = append(result.IDs, id)
+		result.CreatedNames[i] = r.created
+	}
+
+	if err := tx.Commit(); err != nil {
+		return FileInboundResult{}, fmt.Errorf("commit: %w", err)
+	}
+	committed = true
+
+	logOp("stock", "file_inbound", "accepted", result.Inbound, "created", result.Created)
+	return result, nil
+}
+
 // checkClientRefIdempotent returns the existing flow (and a nil err) when a
 // non-empty ClientRef matches an existing flow. Empty ClientRef skips the
 // check entirely. Repo ErrNotFound is the expected "no match" signal and

@@ -106,3 +106,31 @@ export async function executeFileOutbound(file: File): Promise<FileForceOutbound
   }
   return res.json();
 }
+
+export interface FileInboundItem {
+  name: string;
+  quantity: number;
+  accessory_id: number;
+  created: boolean;
+  flow_id: number;
+  balance_after: number;
+}
+
+export interface FileInboundResult {
+  inbound: number;
+  created: number;
+  total_items: number;
+  items: FileInboundItem[];
+}
+
+export async function executeFileInbound(file: File): Promise<FileInboundResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/v1/stock/file_inbound', { method: 'POST', body: form });
+  if (!res.ok) {
+    let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
+    try { errBody = await res.json(); } catch {}
+    throw errBody;
+  }
+  return res.json();
+}

@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/jiaobendaye/warehouse/internal/api"
 	"github.com/jiaobendaye/warehouse/internal/db"
@@ -410,3 +413,138 @@ var _ = context.Background
 // silence unused import warnings (sql used by reader; we don't actually need
 // it here but keep imports for parity with future error-translation tests).
 var _ sql.IsolationLevel = sql.LevelDefault
+// --- File inbound end-to-end --------------------------------------------
+
+func TestStockFileInbound_HappyPath_CreatesAndStocks(t *testing.T) {
+	h := newRouter(t)
+
+	// Pre-seed one existing accessory so we exercise both branches.
+	resp, _ := httpDo(t, h, http.MethodPost, "/api/v1/accessories", map[string]any{
+		"name": "FI-EXISTS",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed create: status=%d", resp.StatusCode)
+	}
+	// And a baseline inbound so we can verify the stock adds on top.
+	// Get its id by listing.
+	listResp, listRaw := httpDo(t, h, http.MethodGet, "/api/v1/accessories?q=FI-EXISTS", nil)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("list: status=%d body=%s", listResp.StatusCode, listRaw)
+	}
+	var listed struct {
+		Items []struct {
+			ID    int64  `json:"id"`
+			Name  string `json:"name"`
+			Stock int64  `json:"current_stock"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listRaw, &listed); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(listed.Items) != 1 {
+		t.Fatalf("want 1 listed, got %d", len(listed.Items))
+	}
+	existingID := listed.Items[0].ID
+	_ = existingID // referenced indirectly via stock assertion below
+
+	// Build xlsx with one existing + two new rows; the existing name
+	// has a trailing space to exercise trim semantics.
+	xf := excelize.NewFile()
+	defer xf.Close()
+	putXlsxRow(t, xf, 0, "配件", "数量")
+	putXlsxRow(t, xf, 1, "FI-EXISTS ", "3")
+	putXlsxRow(t, xf, 2, "FI-NEW-1", "7")
+	putXlsxRow(t, xf, 3, "FI-NEW-2", "5")
+	var xbuf bytes.Buffer
+	if err := xf.Write(&xbuf); err != nil {
+		t.Fatalf("xlsx write: %v", err)
+	}
+
+	resp, raw := postMultipartFile(t, h, "/api/v1/stock/file_inbound", "file", "入库.xlsx", &xbuf)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	var got api.FileInboundResult
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, raw)
+	}
+	if got.Inbound != 3 || got.Created != 2 {
+		t.Fatalf("result = %+v, want inbound=3 created=2", got)
+	}
+	// Re-list to confirm stock numbers.
+	listed.Items = nil
+	listResp, listRaw = httpDo(t, h, http.MethodGet, "/api/v1/accessories?q=FI-", nil)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("re-list: status=%d", listResp.StatusCode)
+	}
+	if err := json.Unmarshal(listRaw, &listed); err != nil {
+		t.Fatalf("re-unmarshal: %v", err)
+	}
+	want := map[string]int64{
+		"FI-EXISTS": 3, // 0 baseline + 3 inbound
+		"FI-NEW-1":  7,
+		"FI-NEW-2":  5,
+	}
+	for _, it := range listed.Items {
+		if w, ok := want[it.Name]; ok {
+			if it.Stock != w {
+				t.Errorf("%s stock = %d, want %d", it.Name, it.Stock, w)
+			}
+			delete(want, it.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("missing rows in catalog after inbound: %+v", want)
+	}
+}
+
+func TestStockFileInbound_RejectsMissingFile(t *testing.T) {
+	h := newRouter(t)
+	// Send a multipart with the wrong field name.
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, _ := mw.CreateFormFile("attachment", "x.xlsx")
+	_, _ = fw.Write([]byte("not an xlsx"))
+	_ = mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/stock/file_inbound", body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// --- helpers -------------------------------------------------------------
+
+func putXlsxRow(t *testing.T, xf *excelize.File, r int, cells ...string) {
+	t.Helper()
+	for c, v := range cells {
+		cell, _ := excelize.CoordinatesToCellName(c+1, r+1)
+		if err := xf.SetCellValue("Sheet1", cell, v); err != nil {
+			t.Fatalf("set cell %s: %v", cell, err)
+		}
+	}
+}
+
+func postMultipartFile(t *testing.T, h http.Handler, path, field, filename string, content io.Reader) (*http.Response, []byte) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, err := mw.CreateFormFile(field, filename)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := io.Copy(fw, content); err != nil {
+		t.Fatalf("copy content: %v", err)
+	}
+	_ = mw.Close()
+	req := httptest.NewRequest(http.MethodPost, path, body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp, raw
+}

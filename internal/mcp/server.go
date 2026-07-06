@@ -64,7 +64,7 @@ var implementation = &mcpsdk.Implementation{
 	Version: "1.0.0",
 }
 
-// NewServer builds a fully wired *mcpsdk.Server with all 15 tools registered.
+// NewServer builds a fully wired *mcpsdk.Server with all 16 tools registered.
 // It does not start any transport — call RunStdio or Handler to expose it.
 func NewServer(svcs Services) *mcpsdk.Server {
 	srv := mcpsdk.NewServer(implementation, nil)
@@ -74,6 +74,7 @@ func NewServer(svcs Services) *mcpsdk.Server {
 	registerFlowTools(srv, svcs.Flow)
 	registerReplenishmentTools(srv, svcs.Replenishment)
 	registerFileOutboundTools(srv, svcs.Stock, svcs.Accessory)
+	registerFileInboundTools(srv, svcs.Stock)
 
 	return srv
 }

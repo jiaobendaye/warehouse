@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -126,7 +127,7 @@ func TestTranslateError_WrappedSentinels(t *testing.T) {
 // tools/list — 13 tools exactly
 // ------------------------------------------------------------------
 
-func TestToolsList_AllFifteen(t *testing.T) {
+func TestToolsList_AllSixteen(t *testing.T) {
 	svcs := newTestServices(t)
 	srv := mcp.NewServer(svcs)
 
@@ -159,6 +160,7 @@ func TestToolsList_AllFifteen(t *testing.T) {
 		"replenishment.check",
 		"stock.file_outbound",
 		"stock.file_outbound.execute",
+		"stock.file_inbound",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("want %d tools, got %d (%v)", len(want), len(got), got)
@@ -496,8 +498,8 @@ func TestStdioRoundtrip_Minimal(t *testing.T) {
 		t.Fatalf("want result, got %v", resp)
 	}
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 15 {
-		t.Fatalf("want 15 tools, got %d", len(tools))
+	if len(tools) != 16 {
+		t.Fatalf("want 16 tools, got %d", len(tools))
 	}
 
 	// Shutdown: close client-side writer; cancel context.
@@ -900,6 +902,107 @@ func TestTool_FileOutbound_Execute(t *testing.T) {
 	}
 	if result.Created != 1 {
 		t.Fatalf("expected created=1, got %d", result.Created)
+	}
+}
+
+// TestStockFileInbound_MCP — exercises stock.file_inbound end-to-end via
+// the stdio transport. Seeds one accessory, builds an xlsx with a
+// header row + the existing name (with trailing whitespace) + a new
+// name, then verifies the response shape, the catalogue state, and
+// the inbound flow count.
+func TestStockFileInbound_MCP(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	// Seed one existing accessory so we exercise both branches.
+	createAccessoryViaMCP(t, session, "MCP-FI-EXISTS", 0)
+
+	// Build an xlsx with the first sheet (default Sheet1) in
+	// [配件, 数量] two-column format. The existing name carries
+	// trailing whitespace to exercise the trim path.
+	dir := t.TempDir()
+	xlsxPath := filepath.Join(dir, "inbound.xlsx")
+	f := excelize.NewFile()
+	for r, row := range [][]string{
+		{"配件", "数量"},
+		{"MCP-FI-EXISTS ", "3"},
+		{"MCP-FI-NEW", "7"},
+	} {
+		for c, val := range row {
+			cell, _ := excelize.CoordinatesToCellName(c+1, r+1)
+			if err := f.SetCellValue("Sheet1", cell, val); err != nil {
+				t.Fatalf("set cell: %v", err)
+			}
+		}
+	}
+	if err := f.SaveAs(xlsxPath); err != nil {
+		t.Fatalf("save xlsx: %v", err)
+	}
+
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.file_inbound", Arguments: map[string]any{"file_path": xlsxPath},
+	})
+	if err != nil {
+		t.Fatalf("stock.file_inbound: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("stock.file_inbound IsError: %+v", res)
+	}
+	var result struct {
+		Inbound int `json:"inbound"`
+		Created int `json:"created"`
+		Items   []struct {
+			Name         string `json:"name"`
+			Quantity     int64  `json:"quantity"`
+			AccessoryID  int64  `json:"accessory_id"`
+			Created      bool   `json:"created"`
+			FlowID       int64  `json:"flow_id"`
+			BalanceAfter int64  `json:"balance_after"`
+		} `json:"items"`
+	}
+	if err := decodeStructured(res.StructuredContent, &result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.Inbound != 2 {
+		t.Fatalf("inbound = %d, want 2", result.Inbound)
+	}
+	if result.Created != 1 {
+		t.Fatalf("created = %d, want 1", result.Created)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("items len = %d, want 2", len(result.Items))
+	}
+	for _, it := range result.Items {
+		if it.AccessoryID == 0 || it.FlowID == 0 {
+			t.Errorf("row %+v has zero ID", it)
+		}
+	}
+	// Verify the trim worked: the existing name was sent with a
+	// trailing space; Created must be false and balance should be 3.
+	var existingCreated *bool
+	var existingBalance int64
+	var existingFound bool
+	for i := range result.Items {
+		if result.Items[i].Name == "MCP-FI-EXISTS" {
+			c := result.Items[i].Created
+			existingCreated = &c
+			existingBalance = result.Items[i].BalanceAfter
+			existingFound = true
+		}
+	}
+	if !existingFound {
+		t.Fatal("MCP-FI-EXISTS row missing")
+	}
+	if existingCreated == nil || *existingCreated {
+		t.Errorf("MCP-FI-EXISTS Created = %v, want false (trim should match existing row)", existingCreated)
+	}
+	if existingBalance != 3 {
+		t.Errorf("MCP-FI-EXISTS balance = %d, want 3", existingBalance)
 	}
 }
 

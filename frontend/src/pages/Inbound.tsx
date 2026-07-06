@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../components/Toast';
 import { listAccessories, type Accessory } from '../api/accessory';
-import { inbound, batchInbound, type InboundCmd } from '../api/stock';
+import { inbound, batchInbound, executeFileInbound, type InboundCmd, type FileInboundResult } from '../api/stock';
 
 // ── shared styles ──
 const inp: React.CSSProperties = {
@@ -33,7 +33,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function Inbound() {
   const { showToast } = useToast();
   const [accessories, setAccessories] = useState<Accessory[]>([]);
-  const [mode, setMode] = useState<'single' | 'batch'>('single');
+  const [mode, setMode] = useState<'file' | 'single' | 'batch'>('file');
 
   // ── single mode ──
   const [sAccId, setSAccId] = useState<number | ''>('');
@@ -47,6 +47,11 @@ export default function Inbound() {
   interface BatchRow { key: number; accessory_id: number | ''; quantity: number; remark: string; }
   const [rows, setRows] = useState<BatchRow[]>([{ key: 1, accessory_id: '', quantity: 1, remark: '' }]);
   const [bResult, setBResult] = useState<{ accepted: number; flows: Array<{ id: number; balance_after: number }> } | null>(null);
+
+  // ── file mode ──
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [fResult, setFResult] = useState<FileInboundResult | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   let nextRowKey = rows.length > 0 ? Math.max(...rows.map(r => r.key)) + 1 : 1;
@@ -123,12 +128,39 @@ export default function Inbound() {
     </div>
   );
 
+  // ── file mode handlers ──
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) setFile(f);
+  };
+
+  const handleFileInbound = async () => {
+    if (!file) { showToast('error', '请先选择 xlsx 文件'); return; }
+    setSubmitting(true);
+    setFResult(null);
+    try {
+      const res = await executeFileInbound(file);
+      setFResult(res);
+      const parts: string[] = [`文件入库成功，${res.inbound} 笔`];
+      if (res.created > 0) parts.push(`新建 ${res.created} 种`);
+      showToast('success', parts.join('，'));
+      setFile(null);
+      if (fileRef.current) fileRef.current.value = '';
+    } catch (err: any) {
+      showToast('error', err?.error?.message || '文件入库失败');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div>
       <h2 style={{ margin: '0 0 12px' }}>入库</h2>
 
       {/* mode toggle */}
       <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+        <button style={mode === 'file' ? btn : btnGray} onClick={() => setMode('file')}>文件入库</button>
         <button style={mode === 'single' ? btn : btnGray} onClick={() => setMode('single')}>单笔入库</button>
         <button style={mode === 'batch' ? btn : btnGray} onClick={() => setMode('batch')}>批量入库</button>
       </div>
@@ -215,6 +247,29 @@ export default function Inbound() {
                   流水 #{f.id} 结余: {f.balance_after}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* file mode */}
+      {mode === 'file' && (
+        <div style={{ maxWidth: 600 }}>
+          <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+            上传 xlsx 入库单，读取第一个 sheet（首行表头 + [配件, 数量] 数据行），系统自动入库并在配件不存在时新建。
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+            <input ref={fileRef} type="file" accept=".xlsx" onChange={handleFileChange}
+              style={{ fontSize: 13 }} />
+            <button style={btn} disabled={!file || submitting} onClick={handleFileInbound}>
+              {submitting ? '入库中…' : '确认入库'}
+            </button>
+          </div>
+
+          {fResult && (
+            <div style={{ padding: '8px 12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 4, fontSize: 13 }}>
+              文件入库成功，共 {fResult.inbound} 笔
+              {fResult.created > 0 && <span>，新建 {fResult.created} 种配件</span>}
             </div>
           )}
         </div>
