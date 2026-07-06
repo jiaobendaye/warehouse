@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useToast } from '../components/Toast';
-import { scan, check, type ReplenishmentItem } from '../api/replenishment';
+import { isWails } from '../api/client';
+import { scan, check, exportReplenishment, type ReplenishmentItem } from '../api/replenishment';
 
 const thS: React.CSSProperties = {
   border: '1px solid #ddd', padding: '8px 12px', background: '#fafafa',
@@ -79,6 +80,36 @@ export default function Replenishment() {
     }
   };
 
+  // ── export scan result ──
+  // Hits the backend xlsx endpoint, gets a Blob, then triggers a hidden
+  // <a download> click so the browser saves the file. Same Wails guard as
+  // AccessoryList: the embedded WebView doesn't honor <a download>.
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    if (exporting) return;
+    if (isWails()) {
+      showToast('warning', '请在浏览器中打开本应用后再导出文件');
+      return;
+    }
+    setExporting(true);
+    try {
+      const blob = await exportReplenishment();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `告急补货_${formatStamp(new Date())}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      showToast('success', '导出已开始');
+    } catch (err: any) {
+      showToast('error', err?.error?.message || '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // ── shortage row style ──
   const rowStyle = (item: ReplenishmentItem, idx: number): React.CSSProperties => ({
     background: item.shortage > 0
@@ -101,6 +132,15 @@ export default function Replenishment() {
         <button style={btn} disabled={scanning} onClick={handleScan}>
           {scanning ? '扫描中…' : '扫描告急'}
         </button>
+        {scanResult && scanResult.length > 0 && (
+          <button
+            style={{ ...btnGray, marginLeft: 8 }}
+            disabled={exporting}
+            onClick={handleExport}
+          >
+            {exporting ? '导出中…' : '导出'}
+          </button>
+        )}
 
         {scanResult && scanResult.length > 0 && (
           <div style={{ marginTop: 12 }}>
@@ -229,4 +269,13 @@ export default function Replenishment() {
       </div>
     </div>
   );
+}
+
+// formatStamp renders a Date as YYYYMMDD_HHMMSS in local time, mirroring
+// the backend's filename timestamp so the two stay aligned. Used for the
+// xlsx download filename — no timezone math, just local.
+function formatStamp(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }

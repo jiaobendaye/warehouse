@@ -1,5 +1,5 @@
 // Package mcp is the Model Context Protocol transport layer for the
-// warehouse. It registers the 13 tools documented in
+// warehouse. It registers the 17 tools documented in
 // changes/mobile-accessories-management/specs/mcp-server.md on top of the
 // existing service layer, and exposes both a stdio transport (for AI agents
 // that launch the binary as a subprocess) and an HTTP/SSE handler at /mcp
@@ -64,7 +64,7 @@ var implementation = &mcpsdk.Implementation{
 	Version: "1.0.0",
 }
 
-// NewServer builds a fully wired *mcpsdk.Server with all 16 tools registered.
+// NewServer builds a fully wired *mcpsdk.Server with all 17 tools registered.
 // It does not start any transport — call RunStdio or Handler to expose it.
 func NewServer(svcs Services) *mcpsdk.Server {
 	srv := mcpsdk.NewServer(implementation, nil)

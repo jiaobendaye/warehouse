@@ -644,6 +644,111 @@ func TestAccessoriesExport_Empty(t *testing.T) {
 	}
 }
 
+// --- Replenishment xlsx export ------------------------------------------
+
+// TestReplenishmentExport_RoundTrip seeds two accessories that are both
+// in shortage (Scan filters out non-short rows), with different severity
+// so the sort-by-shortage-DESC ordering is observable. Hits the export
+// endpoint and verifies the xlsx round-trips with the correct columns.
+func TestReplenishmentExport_RoundTrip(t *testing.T) {
+	h := newRouter(t)
+
+	// 导出-A: stock=1, threshold=5 (default) → shortage=4 (most urgent).
+	a := newAccessory(t, h, "导出-A")
+	if resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/stock/inbound",
+		service.InboundCmd{AccessoryID: a.ID, Quantity: 1}); resp.StatusCode/100 != 2 {
+		t.Fatalf("inbound A: %d %s", resp.StatusCode, raw)
+	}
+	// 导出-B: stock=2, threshold=5 → shortage=3 (less urgent, must sort after A).
+	b := newAccessory(t, h, "导出-B")
+	if resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/stock/inbound",
+		service.InboundCmd{AccessoryID: b.ID, Quantity: 2}); resp.StatusCode/100 != 2 {
+		t.Fatalf("inbound B: %d %s", resp.StatusCode, raw)
+	}
+
+	resp, raw := httpDo(t, h, http.MethodGet, "/api/v1/replenishment/export", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, raw)
+	}
+
+	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Errorf("Content-Type = %q, want xlsx mime", ct)
+	}
+	cd := resp.Header.Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment;") || !strings.Contains(cd, ".xlsx") {
+		t.Errorf("Content-Disposition = %q, want attachment with .xlsx filename", cd)
+	}
+
+	xf, err := excelize.OpenReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open xlsx: %v (body=%d bytes)", err, len(raw))
+	}
+	defer xf.Close()
+
+	sheet := "告急补货"
+	rows, err := xf.GetRows(sheet)
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	// 1 header + 2 data rows.
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (header + 2); sheet=%+v", len(rows), rows)
+	}
+
+	wantHeaders := []string{"名称", "当前库存", "阈值", "缺货量", "建议补货"}
+	for i, want := range wantHeaders {
+		if i >= len(rows[0]) || rows[0][i] != want {
+			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
+		}
+	}
+
+	// Sort by shortage DESC — A (shortage=9) must come before B (shortage=2).
+	if rows[1][0] != "导出-A" {
+		t.Errorf("row[1] name = %q, want 导出-A (highest shortage first)", rows[1][0])
+	}
+	if rows[1][1] != "1" {
+		t.Errorf("导出-A stock = %q, want 1", rows[1][1])
+	}
+	if rows[1][3] != "4" {
+		t.Errorf("导出-A shortage = %q, want 4", rows[1][3])
+	}
+	if rows[2][0] != "导出-B" {
+		t.Errorf("row[2] name = %q, want 导出-B", rows[2][0])
+	}
+	if rows[2][1] != "2" {
+		t.Errorf("导出-B stock = %q, want 2", rows[2][1])
+	}
+	if rows[2][3] != "3" {
+		t.Errorf("导出-B shortage = %q, want 3", rows[2][3])
+	}
+}
+
+// TestReplenishmentExport_Empty — exporting when no accessories exist
+// must still produce a valid xlsx with just the header row.
+func TestReplenishmentExport_Empty(t *testing.T) {
+	h := newRouter(t)
+
+	resp, raw := httpDo(t, h, http.MethodGet, "/api/v1/replenishment/export", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, raw)
+	}
+	xf, err := excelize.OpenReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("open xlsx: %v", err)
+	}
+	defer xf.Close()
+	rows, err := xf.GetRows("告急补货")
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (header only); got %+v", len(rows), rows)
+	}
+	if len(rows[0]) != 5 {
+		t.Errorf("header column count = %d, want 5; got %+v", len(rows[0]), rows[0])
+	}
+}
+
 // safeCell returns rows[r][c] or "<missing>" when the cell is absent —
 // keeps failure messages readable when the sheet is malformed.
 func safeCell(rows [][]string, r, c int) string {

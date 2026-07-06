@@ -6,7 +6,7 @@
 //   - TranslateError maps the four service sentinels to the JSON-RPC codes
 //     documented in the spec (NOT_FOUND=-32004, CONFLICT=-32005,
 //     BAD_REQUEST=-32600).
-//   - tools/list returns exactly the 13 tools named in the spec.
+//   - tools/list returns exactly the 17 tools named in the spec.
 //   - tool calls exercise the underlying service methods, with both happy
 //     paths and error paths, and surface the right JSON-RPC error codes on
 //     failure.
@@ -14,6 +14,7 @@
 package mcp_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,12 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuri/excelize/v2"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/jiaobendaye/warehouse/internal/db"
 	"github.com/jiaobendaye/warehouse/internal/mcp"
 	"github.com/jiaobendaye/warehouse/internal/repo"
-	"github.com/xuri/excelize/v2"
 
 	"github.com/jiaobendaye/warehouse/internal/service"
 )
@@ -124,7 +125,7 @@ func TestTranslateError_WrappedSentinels(t *testing.T) {
 }
 
 // ------------------------------------------------------------------
-// tools/list — 13 tools exactly
+// tools/list — 17 tools exactly
 // ------------------------------------------------------------------
 
 func TestToolsList_AllSixteen(t *testing.T) {
@@ -158,6 +159,7 @@ func TestToolsList_AllSixteen(t *testing.T) {
 		"flow.get",
 		"replenishment.scan",
 		"replenishment.check",
+		"replenishment.export",
 		"stock.file_outbound",
 		"stock.file_outbound.execute",
 		"stock.file_inbound",
@@ -498,8 +500,8 @@ func TestStdioRoundtrip_Minimal(t *testing.T) {
 		t.Fatalf("want result, got %v", resp)
 	}
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 16 {
-		t.Fatalf("want 16 tools, got %d", len(tools))
+	if len(tools) != 17 {
+		t.Fatalf("want 17 tools, got %d", len(tools))
 	}
 
 	// Shutdown: close client-side writer; cancel context.
@@ -668,6 +670,111 @@ func TestTool_ReplenishmentScan_ExcludesThresholdZero(t *testing.T) {
 	if !found {
 		t.Fatal("告急配件-MCP should appear in scan")
 	}
+}
+
+// TestTool_ReplenishmentExport_ReturnsXLSX exercises replenishment.export
+// end-to-end: seeds an accessory in shortage, calls the tool over the MCP
+// in-memory transport, finds the EmbeddedResource in the result, opens
+// the blob bytes with excelize, and verifies the row layout matches what
+// the HTTP endpoint produces. Also asserts the TextContent header line is
+// present so an agent that ignores the file still sees the summary.
+func TestTool_ReplenishmentExport_ReturnsXLSX(t *testing.T) {
+	svcs := newTestServices(t)
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	ctx := context.Background()
+
+	// One short accessory (threshold=5, stock=1 → shortage=4) is enough
+	// to drive both the text summary ("Exported 1 row") and the xlsx body.
+	short := createAccessoryViaMCP(t, session, "MCP-EXPORT-1", 5)
+	if _, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "stock.inbound", Arguments: map[string]any{"accessory_id": short.ID, "quantity": 1},
+	}); err != nil {
+		t.Fatalf("stock.inbound: %v", err)
+	}
+
+	res, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "replenishment.export", Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("replenishment.export: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("replenishment.export IsError: %+v", res)
+	}
+	if len(res.Content) < 2 {
+		t.Fatalf("expected ≥2 content blocks (text + embedded resource); got %d", len(res.Content))
+	}
+
+	// Block 0 must be the TextContent summary.
+	tc, ok := res.Content[0].(*mcpsdk.TextContent)
+	if !ok {
+		t.Fatalf("content[0] type = %T, want *mcpsdk.TextContent", res.Content[0])
+	}
+	if !strings.Contains(tc.Text, "replenishment_") || !strings.Contains(tc.Text, ".xlsx") {
+		t.Errorf("summary text = %q, want it to mention filename and .xlsx", tc.Text)
+	}
+	if !strings.Contains(tc.Text, "1 replenishment row") {
+		t.Errorf("summary text = %q, want it to mention '1 replenishment row'", tc.Text)
+	}
+
+	// Block 1 must be the EmbeddedResource carrying the xlsx blob.
+	er, ok := res.Content[1].(*mcpsdk.EmbeddedResource)
+	if !ok {
+		t.Fatalf("content[1] type = %T, want *mcpsdk.EmbeddedResource", res.Content[1])
+	}
+	if er.Resource == nil {
+		t.Fatal("EmbeddedResource.Resource is nil")
+	}
+	if er.Resource.MIMEType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+		t.Errorf("MIMEType = %q, want xlsx mime", er.Resource.MIMEType)
+	}
+	if !strings.HasPrefix(er.Resource.URI, "embedded://replenishment/replenishment_") {
+		t.Errorf("URI = %q, want embedded://replenishment/replenishment_*.xlsx", er.Resource.URI)
+	}
+	if len(er.Resource.Blob) == 0 {
+		t.Fatal("EmbeddedResource.Blob is empty")
+	}
+
+	// The blob must round-trip as a real xlsx with the expected rows.
+	xf, err := excelize.OpenReader(bytes.NewReader(er.Resource.Blob))
+	if err != nil {
+		t.Fatalf("open xlsx from blob: %v (blob=%d bytes)", err, len(er.Resource.Blob))
+	}
+	defer xf.Close()
+	rows, err := xf.GetRows("告急补货")
+	if err != nil {
+		t.Fatalf("get rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (header + 1 data); got %+v", len(rows), rows)
+	}
+	wantHeaders := []string{"名称", "当前库存", "阈值", "缺货量", "建议补货"}
+	for i, want := range wantHeaders {
+		if i >= len(rows[0]) || rows[0][i] != want {
+			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
+		}
+	}
+	if rows[1][0] != "MCP-EXPORT-1" {
+		t.Errorf("data row name = %q, want MCP-EXPORT-1", rows[1][0])
+	}
+	if rows[1][3] != "4" {
+		t.Errorf("data row shortage = %q, want 4", rows[1][3])
+	}
+}
+
+// safeCell mirrors the api package helper: returns rows[r][c] or a
+// readable placeholder when the cell is absent.
+func safeCell(rows [][]string, r, c int) string {
+	if r >= len(rows) {
+		return "<missing row>"
+	}
+	if c >= len(rows[r]) {
+		return ""
+	}
+	return rows[r][c]
 }
 
 func TestTool_AccessoryGet_ByName(t *testing.T) {

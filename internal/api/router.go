@@ -66,6 +66,7 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 		// Replenishment advisor
 		r.Get("/replenishment/scan", rpl.Scan)
 		r.Post("/replenishment/check", rpl.Check)
+		r.Get("/replenishment/export", rpl.Export)
 	})
 
 	return r
