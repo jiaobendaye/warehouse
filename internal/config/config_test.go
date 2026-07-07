@@ -15,8 +15,8 @@ func TestParse_Defaults(t *testing.T) {
 
 	cfg := config.Parse([]string{"warehouse"})
 
-	if cfg.Host != "127.0.0.1" {
-		t.Errorf("default Host = %q, want 127.0.0.1", cfg.Host)
+	if cfg.Host != "0.0.0.0" {
+		t.Errorf("default Host = %q, want 0.0.0.0", cfg.Host)
 	}
 	if cfg.Port != 17880 {
 		t.Errorf("default Port = %d, want 17880", cfg.Port)

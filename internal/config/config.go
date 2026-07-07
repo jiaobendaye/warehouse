@@ -4,7 +4,7 @@
 // Precedence (highest wins):
 //  1. Command-line flags  (--host, --port, --db)
 //  2. Environment variables (WAREHOUSE_HOST, WAREHOUSE_PORT, WAREHOUSE_DB_PATH)
-//  3. Defaults (127.0.0.1:17880, ./data/warehouse.db)
+//  3. Defaults (0.0.0.0:17880, ./data/warehouse.db)
 package config
 
 import (
@@ -17,7 +17,7 @@ import (
 
 // Config holds the resolved application configuration.
 type Config struct {
-	Host     string // HTTP listen host (default "127.0.0.1")
+	Host     string // HTTP listen host (default "0.0.0.0")
 	Port     int    // HTTP listen port (default 17880)
 	DBPath   string // SQLite database path
 	Headless bool   // skip GUI, start HTTP+MCP directly (for CI/e2e/testing)
@@ -33,7 +33,7 @@ func DefaultDBPath() string {
 // environment variables, and defaults.
 func Parse(args []string) Config {
 	cfg := Config{
-		Host:   "127.0.0.1",
+		Host:   "0.0.0.0",
 		Port:   17880,
 		DBPath: DefaultDBPath(),
 	}

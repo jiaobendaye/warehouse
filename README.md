@@ -22,7 +22,7 @@ go run . --headless             # 开发
 make linux && ./build/bin/warehouse --headless   # 生产
 ```
 
-启动后访问 <http://127.0.0.1:17880> 即可看到前端（含 REST + MCP 端点）。
+启动后访问 <http://localhost:17880>（或本机内网 IP）即可看到前端（含 REST + MCP 端点）。默认监听 `0.0.0.0`，局域网内其他设备可直接访问。
 
 ## 配置
 
@@ -30,7 +30,7 @@ make linux && ./build/bin/warehouse --headless   # 生产
 
 | flag | 环境变量 | 默认 | 说明 |
 |---|---|---|---|
-| `--host` | `WAREHOUSE_HOST` | `127.0.0.1` | HTTP 监听地址；设为 `0.0.0.0` 开启远程访问 |
+| `--host` | `WAREHOUSE_HOST` | `0.0.0.0` | HTTP 监听地址；显式设为 `127.0.0.1` 仅本机访问 |
 | `--port` | `WAREHOUSE_PORT` | `17880` | HTTP 监听端口 |
 | `--db` | `WAREHOUSE_DB_PATH` | `./data/warehouse.db` | SQLite 数据库路径（相对当前工作目录） |
 | `--headless` | — | `false` | 跳过 GUI，直接 HTTP + MCP |
@@ -42,7 +42,7 @@ make linux && ./build/bin/warehouse --headless   # 生产
 
 ```
 port 17880 in use; falling back to 17881
-HTTP server started on 127.0.0.1:17881
+HTTP server started on 0.0.0.0:17881
 ```
 
 实际监听地址可通过 `App.ServerAddr()`（GUI 绑定）或浏览器地址栏确认。

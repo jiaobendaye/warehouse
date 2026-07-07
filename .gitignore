@@ -20,3 +20,5 @@ node_modules/
 .vscode/
 *.swpbuild/
 frontend/package.json.md5
+
+docs/
