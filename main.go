@@ -51,7 +51,14 @@ func main() {
 	}
 
 	exportsDir := filepath.Join(logDir, "exports")
-	publicBaseURL := fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port)
+	// When --host is the wildcard 0.0.0.0 we don't know which local IP an
+	// external client should use to reach us, so pick one at startup. The
+	// returned URL is what MCP export tools embed in download links.
+	publicHost := config.ResolvePublicHost(cfg.Host)
+	publicBaseURL := fmt.Sprintf("http://%s:%d", publicHost, cfg.Port)
+	if publicHost != cfg.Host {
+		log.Printf("public host resolved: %s (bind: %s)", publicHost, cfg.Host)
+	}
 
 	apiHandler := api.NewRouter(api.Services{
 		Accessory:     svcs.Accessory,

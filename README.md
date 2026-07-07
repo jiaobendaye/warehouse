@@ -24,6 +24,8 @@ make linux && ./build/bin/warehouse --headless   # 生产
 
 启动后访问 <http://localhost:17880>（或本机内网 IP）即可看到前端（含 REST + MCP 端点）。默认监听 `0.0.0.0`，局域网内其他设备可直接访问。
 
+> 当 `--host` 是 `0.0.0.0`（默认）时，app 启动会遍历本机网卡挑第一个非 loopback 的 IPv4 作为对外地址，写入 MCP 导出文件返回的下载 URL；挑不到则回退 `localhost`。日志里会打印一行 `public host resolved: <ip> (bind: 0.0.0.0)`。如需指定对外地址，显式传 `--host 192.168.x.x` 即可。
+
 ## 配置
 
 通过命令行 flag 或同名环境变量配置，**命令行优先级更高**：
