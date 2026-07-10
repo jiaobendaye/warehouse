@@ -64,10 +64,12 @@ export default function Outbound() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (mode === 'file') return;
+    if (accessories.length > 0) return;
     listAccessories(undefined, 1000, 0)
       .then(res => setAccessories(res.items))
       .catch(err => showToast('error', err?.error?.message || '加载配件列表失败'));
-  }, [showToast]);
+  }, [mode, showToast, accessories.length]);
 
   const updateRow = (key: number, patch: Partial<BatchRow>) => {
     setRows(prev => prev.map(r => r.key === key ? { ...r, ...patch } : r));
