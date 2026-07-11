@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"runtime"
 
+	"github.com/jiaobendaye/warehouse/internal/config"
 	wailsMenu "github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -33,7 +34,11 @@ func BuildMenu(app *App) *wailsMenu.Menu {
 	}
 
 	openBrowser := func(_ *wailsMenu.CallbackData) {
-		url := fmt.Sprintf("http://%s:%d", app.cfg.Host, app.cfg.Port)
+		// Use the public-facing host (resolves 0.0.0.0/:: to the first
+		// reachable LAN IP) so the URL is meaningful to a browser on
+		// another device — cfg.Host may be a wildcard that is not
+		// directly routable from off-machine.
+		url := fmt.Sprintf("http://%s:%d", config.ResolvePublicHost(app.cfg.Host), app.cfg.Port)
 		_ = openURL(url)
 	}
 

@@ -58,12 +58,12 @@ export function Outbound(arg1, arg2) {
   return window['go']['desktop']['App']['Outbound'](arg1, arg2);
 }
 
-export function ScanShortage(arg1) {
-  return window['go']['desktop']['App']['ScanShortage'](arg1);
+export function PublishAddr() {
+  return window['go']['desktop']['App']['PublishAddr']();
 }
 
-export function ServerAddr() {
-  return window['go']['desktop']['App']['ServerAddr']();
+export function ScanShortage(arg1) {
+  return window['go']['desktop']['App']['ScanShortage'](arg1);
 }
 
 export function SetConfig(arg1) {

@@ -4,6 +4,8 @@ package desktop
 import (
 	"context"
 	"log"
+	"net"
+	"strconv"
 
 	"github.com/jiaobendaye/warehouse/internal/config"
 	"github.com/jiaobendaye/warehouse/internal/domain"
@@ -82,10 +84,24 @@ func (a *App) IsServerRunning() bool {
 	return a.srvMgr.IsRunning()
 }
 
-// ServerAddr returns the address the HTTP server is listening on,
-// or "" when stopped.
-func (a *App) ServerAddr() string {
-	return a.srvMgr.Addr()
+// PublishAddr returns a browser-friendly "host:port" derived from the
+// configured host/port. cfg.Host may be a wildcard ("0.0.0.0", "::") that
+// is not directly routable from another device, so the host is run through
+// config.ResolvePublicHost to substitute the first reachable LAN IP. The
+// port comes from the actual bound listener (post-fallback) when the
+// server is running, otherwise from cfg.Port. Returns "" when stopped.
+func (a *App) PublishAddr() string {
+	host := config.ResolvePublicHost(a.cfg.Host)
+	port := strconv.Itoa(a.cfg.Port)
+	if addr := a.srvMgr.Addr(); addr != "" {
+		// srvMgr.Addr() returns the actual bound listener (e.g. "[::]:17880"
+		// or "0.0.0.0:17881"). Split off the port so the URL reflects the
+		// real listen socket, including any fallback the manager picked.
+		if _, p, err := net.SplitHostPort(addr); err == nil {
+			port = p
+		}
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // ── Accessory bindings ───────────────────────────────────────────

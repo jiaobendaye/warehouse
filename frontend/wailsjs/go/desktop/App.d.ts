@@ -33,9 +33,9 @@ export function ListFlowsByAccessory(arg1:context.Context,arg2:number,arg3:strin
 
 export function Outbound(arg1:context.Context,arg2:service.OutboundCmd):Promise<domain.InventoryFlow>;
 
-export function ScanShortage(arg1:context.Context):Promise<Array<service.ReplenishmentItem>>;
+export function PublishAddr():Promise<string>;
 
-export function ServerAddr():Promise<string>;
+export function ScanShortage(arg1:context.Context):Promise<Array<service.ReplenishmentItem>>;
 
 export function SetConfig(arg1:config.Config):Promise<void>;
 

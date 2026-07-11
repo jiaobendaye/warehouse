@@ -19,7 +19,10 @@ export default function Settings() {
       const running = await App.IsServerRunning();
       setServerRunning(running);
       if (running) {
-        const addr = await App.ServerAddr();
+        // PublishAddr resolves the public-facing host (e.g. substitutes
+        // the first LAN IP for 0.0.0.0) so the displayed URL is one a
+        // browser on another device can actually reach.
+        const addr = await App.PublishAddr();
         setServerAddr(addr);
       }
     } catch {
@@ -44,7 +47,7 @@ export default function Settings() {
       } else {
         await App.StartServer();
         setServerRunning(true);
-        setServerAddr(await App.ServerAddr());
+        setServerAddr(await App.PublishAddr());
       }
     } catch (e: any) {
       console.error('Server toggle error:', e);
@@ -122,6 +125,9 @@ export default function Settings() {
             http://{serverAddr || '127.0.0.1:17880'}/mcp
           </code>
         </p>
+        {/* Note: serverAddr now comes from App.PublishAddr(), which already
+            resolves 0.0.0.0 → LAN IP. The "127.0.0.1:17880" fallback above
+            is only shown before the first successful status refresh. */}
         <p style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
           外部 AI 代理可通过此端点调用仓库管理能力。
         </p>
