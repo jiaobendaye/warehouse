@@ -18,11 +18,12 @@ import (
 // stockInboundInput is the JSON shape for stock.inbound.
 type stockInboundInput struct {
 	AccessoryID int64   `json:"accessory_id"          jsonschema:"target accessory id"`
-	Quantity    int64   `json:"quantity"              jsonschema:"units to add (must be > 0)"`
+	Quantity    int64   `json:"quantity"              jsonschema:"units to add (must be > 0), or target stock level when calibration=true (>= 0)"`
 	UnitCost    float64 `json:"unit_cost,omitempty"   jsonschema:"per-unit cost (informational)"`
 	Remark      string  `json:"remark,omitempty"      jsonschema:"free-form remark"`
 	OccurredAt  string  `json:"occurred_at,omitempty" jsonschema:"RFC3339 occurrence time (defaults to now)"`
 	ClientRef   string  `json:"client_ref,omitempty"  jsonschema:"idempotency key; same key returns the original flow"`
+	Calibration bool    `json:"calibration,omitempty" jsonschema:"when true quantity is the target absolute stock level rather than a delta"`
 }
 
 // stockOutboundInput mirrors stockInboundInput but exposes unit_price.
@@ -54,7 +55,7 @@ type batchResultOutput struct {
 
 func registerStockTools(srv *mcpsdk.Server, svc *service.StockService) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "stock.inbound", Description: "Record a single inbound (stock-in) operation. Idempotent via client_ref.",
+		Name: "stock.inbound", Description: "Record a single inbound (stock-in) operation. Idempotent via client_ref. Pass calibration=true to set stock to the quantity field instead of adding.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in stockInboundInput) (*mcpsdk.CallToolResult, domain.InventoryFlow, error) {
 		flow, err := svc.Inbound(ctx, service.InboundCmd{
 			AccessoryID: in.AccessoryID,
@@ -63,6 +64,7 @@ func registerStockTools(srv *mcpsdk.Server, svc *service.StockService) {
 			Remark:      in.Remark,
 			OccurredAt:  in.OccurredAt,
 			ClientRef:   in.ClientRef,
+			Calibration: in.Calibration,
 		})
 		if err != nil {
 			return nil, domain.InventoryFlow{}, rpcError(err)
@@ -88,7 +90,7 @@ func registerStockTools(srv *mcpsdk.Server, svc *service.StockService) {
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "stock.batch_inbound", Description: "Apply N inbound operations under one transaction (all-or-nothing).",
+		Name: "stock.batch_inbound", Description: "Apply N inbound operations under one transaction (all-or-nothing). Each item may set calibration=true to use set-to-X semantics on that row.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in stockBatchInboundInput) (*mcpsdk.CallToolResult, batchResultOutput, error) {
 		items := make([]service.InboundCmd, 0, len(in.Items))
 		for _, it := range in.Items {
@@ -99,6 +101,7 @@ func registerStockTools(srv *mcpsdk.Server, svc *service.StockService) {
 				Remark:      it.Remark,
 				OccurredAt:  it.OccurredAt,
 				ClientRef:   it.ClientRef,
+				Calibration: it.Calibration,
 			})
 		}
 		res, err := svc.BatchInbound(ctx, items)

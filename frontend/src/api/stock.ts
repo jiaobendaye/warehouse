@@ -7,6 +7,11 @@ export interface InboundCmd {
   remark?: string;
   occurred_at?: string;
   client_ref?: string;
+  // When true the backend treats `quantity` as the target absolute stock
+  // level (set-to-X semantics) instead of an additive delta. Calibration
+  // flows are recorded with a "[校准]" remark prefix so the flows page
+  // can distinguish them from regular in/out rows.
+  calibration?: boolean;
 }
 
 export interface OutboundCmd {

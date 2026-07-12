@@ -39,6 +39,12 @@ var ErrInsufficientStock = errors.New("service: insufficient stock")
 // UnitCost, Remark and OccurredAt are optional. ClientRef is the idempotency
 // key; if non-empty and a flow with the same client_ref already exists, the
 // original flow is returned and no state is changed.
+//
+// Calibration reuses this struct: when Calibration is true the Quantity
+// field is interpreted as the desired absolute stock level rather than a
+// delta. The service computes target − current and records an 'in' or 'out'
+// flow accordingly; when the difference is zero no flow row is written and
+// the existing balance is returned.
 type InboundCmd struct {
 	AccessoryID int64   `json:"accessory_id"`
 	Quantity    int64   `json:"quantity"`
@@ -46,6 +52,11 @@ type InboundCmd struct {
 	Remark      string  `json:"remark,omitempty"`
 	OccurredAt  string  `json:"occurred_at,omitempty"`
 	ClientRef   string  `json:"client_ref,omitempty"`
+	// Calibration switches the semantics from "add quantity" to
+	// "set stock to quantity". When true the Quantity field is the
+	// target stock level (must be ≥ 0); the service writes an in/out
+	// flow carrying the signed delta and balance_after = target.
+	Calibration bool `json:"calibration,omitempty"`
 }
 
 // OutboundCmd is the request payload for a single outbound (stock-out)
@@ -91,17 +102,34 @@ func NewStockService(acc *repo.AccessoryRepo, flow *repo.FlowRepo, db *sql.DB) *
 
 // Inbound records a stock-in. Atomicity: tx wraps adjust + insert. Idempotency:
 // non-empty ClientRef short-circuits to the original flow when one exists.
+//
+// Calibration mode: when in.Calibration is true the Quantity field is
+// interpreted as the desired absolute stock level. The service computes
+// delta = target − current and writes:
+//   - 'in' flow when delta > 0 (raising stock),
+//   - 'out' flow when delta < 0 (lowering stock),
+//   - no flow row when delta == 0 (returns the current balance with
+//     ID=0 so callers can detect a no-op calibration).
+//
+// Calibration flows are tagged with a "[校准]" remark prefix so the
+// flows page can distinguish them from regular inbound rows.
 func (s *StockService) Inbound(ctx context.Context, in InboundCmd) (domain.InventoryFlow, error) {
 	if existing, err := s.checkClientRefIdempotent(ctx, in.ClientRef); err != nil {
 		return domain.InventoryFlow{}, err
 	} else if existing.ID != 0 {
 		return existing, nil
 	}
-	if in.Quantity <= 0 {
-		return domain.InventoryFlow{}, fmt.Errorf("%w: quantity must be positive", ErrInvalidInput)
-	}
 	if in.AccessoryID <= 0 {
 		return domain.InventoryFlow{}, fmt.Errorf("%w: accessory_id is required", ErrInvalidInput)
+	}
+	if in.Calibration {
+		if in.Quantity < 0 {
+			return domain.InventoryFlow{}, fmt.Errorf("%w: quantity (target) must be non-negative", ErrInvalidInput)
+		}
+	} else {
+		if in.Quantity <= 0 {
+			return domain.InventoryFlow{}, fmt.Errorf("%w: quantity must be positive", ErrInvalidInput)
+		}
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -122,25 +150,48 @@ func (s *StockService) Inbound(ctx context.Context, in InboundCmd) (domain.Inven
 		}
 		return domain.InventoryFlow{}, fmt.Errorf("get stock: %w", err)
 	}
-	newStock := cur + in.Quantity
-	if err := s.acc.SetStock(ctx, tx, in.AccessoryID, newStock); err != nil {
+
+	if !in.Calibration {
+		return s.applyInbound(ctx, tx, in, cur, &committed)
+	}
+	// Calibration path: target = in.Quantity, delta = target − cur.
+	target := in.Quantity
+	delta := target - cur
+	if delta == 0 {
+		// No change — release the tx without writing a flow row.
+		_ = tx.Rollback()
+		committed = true
+		return domain.InventoryFlow{
+			AccessoryID:  in.AccessoryID,
+			Type:         domain.FlowTypeIn,
+			BalanceAfter: cur,
+			ClientRef:    in.ClientRef,
+			Remark:       in.Remark,
+			OccurredAt:   in.OccurredAt,
+		}, nil
+	}
+	flowType := domain.FlowTypeIn
+	flowQty := delta
+	if delta < 0 {
+		flowType = domain.FlowTypeOut
+		flowQty = -delta
+	}
+	if err := s.acc.SetStock(ctx, tx, in.AccessoryID, target); err != nil {
 		return domain.InventoryFlow{}, fmt.Errorf("set stock: %w", err)
 	}
-
 	flow := domain.InventoryFlow{
 		AccessoryID:  in.AccessoryID,
-		Type:         domain.FlowTypeIn,
-		Quantity:     in.Quantity,
+		Type:         flowType,
+		Quantity:     flowQty,
 		UnitCost:     in.UnitCost,
-		BalanceAfter: newStock,
+		BalanceAfter: target,
 		ClientRef:    in.ClientRef,
-		Remark:       in.Remark,
+		Remark:       calibrateRemark(in.Remark),
 		OccurredAt:   in.OccurredAt,
 	}
 	if err := flow.Validate(); err != nil {
 		return domain.InventoryFlow{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
 	}
-
 	id, err := s.flow.Insert(ctx, tx, flow)
 	if err != nil {
 		return domain.InventoryFlow{}, fmt.Errorf("insert flow: %w", err)
@@ -154,8 +205,54 @@ func (s *StockService) Inbound(ctx context.Context, in InboundCmd) (domain.Inven
 	if err != nil {
 		return domain.InventoryFlow{}, fmt.Errorf("reload flow: %w", err)
 	}
+	logOp("stock", "calibrate", "flow_id", out.ID, "accessory_id", out.AccessoryID, "delta", delta, "balance_after", out.BalanceAfter, "client_ref", out.ClientRef)
+	return out, nil
+}
+
+// applyInbound carries out the regular (non-calibration) stock-in path.
+// Extracted so Inbound can keep the calibration branch short.
+func (s *StockService) applyInbound(ctx context.Context, tx *sql.Tx, in InboundCmd, cur int64, committed *bool) (domain.InventoryFlow, error) {
+	newStock := cur + in.Quantity
+	if err := s.acc.SetStock(ctx, tx, in.AccessoryID, newStock); err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("set stock: %w", err)
+	}
+	flow := domain.InventoryFlow{
+		AccessoryID:  in.AccessoryID,
+		Type:         domain.FlowTypeIn,
+		Quantity:     in.Quantity,
+		UnitCost:     in.UnitCost,
+		BalanceAfter: newStock,
+		ClientRef:    in.ClientRef,
+		Remark:       in.Remark,
+		OccurredAt:   in.OccurredAt,
+	}
+	if err := flow.Validate(); err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+	}
+	id, err := s.flow.Insert(ctx, tx, flow)
+	if err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("insert flow: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("commit: %w", err)
+	}
+	*committed = true
+
+	out, err := s.flow.GetByID(ctx, id)
+	if err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("reload flow: %w", err)
+	}
 	logOp("stock", "inbound", "flow_id", out.ID, "accessory_id", out.AccessoryID, "qty", out.Quantity, "balance_after", out.BalanceAfter, "client_ref", out.ClientRef)
 	return out, nil
+}
+
+// calibrateRemark prepends the calibration marker so a flows-page scan
+// can identify calibration rows without needing a new flow type.
+func calibrateRemark(s string) string {
+	if s == "" {
+		return "[校准]"
+	}
+	return "[校准] " + s
 }
 
 // Outbound records a stock-out. Atomicity: tx wraps check + adjust + insert.
@@ -237,6 +334,11 @@ func (s *StockService) Outbound(ctx context.Context, in OutboundCmd) (domain.Inv
 // existence and rejects duplicate accessory_id within the batch — two
 // rows on the same id is almost always a caller mistake (merge quantities
 // client-side).
+//
+// Calibration mode is per-item: setting Calibration=true on a row
+// reinterprets Quantity as the desired absolute stock level. Rows with
+// delta == 0 still count as accepted but contribute an empty flow
+// (ID=0) so the BatchResult shape stays indexable.
 func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (BatchResult, error) {
 	if len(items) == 0 {
 		return BatchResult{}, fmt.Errorf("%w: batch must not be empty", ErrInvalidInput)
@@ -247,7 +349,12 @@ func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (Ba
 			return BatchResult{}, fmt.Errorf("%w: row %d: accessory_id is required",
 				ErrInvalidInput, i)
 		}
-		if it.Quantity <= 0 {
+		if it.Calibration {
+			if it.Quantity < 0 {
+				return BatchResult{}, fmt.Errorf("%w: row %d: quantity (target) must be non-negative",
+					ErrInvalidInput, i)
+			}
+		} else if it.Quantity <= 0 {
 			return BatchResult{}, fmt.Errorf("%w: row %d: quantity must be positive",
 				ErrInvalidInput, i)
 		}
@@ -290,18 +397,49 @@ func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (Ba
 			}
 			return BatchResult{}, fmt.Errorf("row %d get stock: %w", i, err)
 		}
-		newStock := cur + it.Quantity
-		if err := s.acc.SetStock(ctx, tx, it.AccessoryID, newStock); err != nil {
+		if !it.Calibration {
+			flow, err := s.appendInboundRow(ctx, tx, i, it, cur)
+			if err != nil {
+				return BatchResult{}, err
+			}
+			result.Flows = append(result.Flows, flow)
+			result.IDs = append(result.IDs, flow.ID)
+			continue
+		}
+		// Calibration row.
+		target := it.Quantity
+		delta := target - cur
+		if delta == 0 {
+			// No change — record an empty flow so the caller can
+			// index by row. ID=0 signals no ledger row written.
+			result.Flows = append(result.Flows, domain.InventoryFlow{
+				AccessoryID:  it.AccessoryID,
+				Type:         domain.FlowTypeIn,
+				BalanceAfter: cur,
+				ClientRef:    it.ClientRef,
+				Remark:       it.Remark,
+				OccurredAt:   it.OccurredAt,
+			})
+			result.IDs = append(result.IDs, 0)
+			continue
+		}
+		flowType := domain.FlowTypeIn
+		flowQty := delta
+		if delta < 0 {
+			flowType = domain.FlowTypeOut
+			flowQty = -delta
+		}
+		if err := s.acc.SetStock(ctx, tx, it.AccessoryID, target); err != nil {
 			return BatchResult{}, fmt.Errorf("row %d set stock: %w", i, err)
 		}
 		flow := domain.InventoryFlow{
 			AccessoryID:  it.AccessoryID,
-			Type:         domain.FlowTypeIn,
-			Quantity:     it.Quantity,
+			Type:         flowType,
+			Quantity:     flowQty,
 			UnitCost:     it.UnitCost,
-			BalanceAfter: newStock,
+			BalanceAfter: target,
 			ClientRef:    it.ClientRef,
-			Remark:       it.Remark,
+			Remark:       calibrateRemark(it.Remark),
 			OccurredAt:   it.OccurredAt,
 		}
 		if err := flow.Validate(); err != nil {
@@ -324,6 +462,35 @@ func (s *StockService) BatchInbound(ctx context.Context, items []InboundCmd) (Ba
 	result.Accepted = len(items)
 	logOp("stock", "batch_inbound", "accepted", result.Accepted, "total", len(items))
 	return result, nil
+}
+
+// appendInboundRow writes a single non-calibration inbound row and
+// returns the resulting flow. Used by BatchInbound's regular path.
+func (s *StockService) appendInboundRow(ctx context.Context, tx *sql.Tx, i int, it InboundCmd, cur int64) (domain.InventoryFlow, error) {
+	newStock := cur + it.Quantity
+	if err := s.acc.SetStock(ctx, tx, it.AccessoryID, newStock); err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("row %d set stock: %w", i, err)
+	}
+	flow := domain.InventoryFlow{
+		AccessoryID:  it.AccessoryID,
+		Type:         domain.FlowTypeIn,
+		Quantity:     it.Quantity,
+		UnitCost:     it.UnitCost,
+		BalanceAfter: newStock,
+		ClientRef:    it.ClientRef,
+		Remark:       it.Remark,
+		OccurredAt:   it.OccurredAt,
+	}
+	if err := flow.Validate(); err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("%w: row %d: %s",
+			ErrInvalidInput, i, err.Error())
+	}
+	id, err := s.flow.Insert(ctx, tx, flow)
+	if err != nil {
+		return domain.InventoryFlow{}, fmt.Errorf("row %d insert flow: %w", i, err)
+	}
+	flow.ID = id
+	return flow, nil
 }
 
 // BatchOutbound applies N outbound operations under one transaction.
@@ -547,9 +714,14 @@ func (s *StockService) FileForceOutbound(ctx context.Context, items []FileOutbou
 }
 
 // FileInboundItem is one [name, qty] line from a parsed xlsx.
+//
+// Calibration reuses this struct: when Calibration is true the Quantity
+// field is the desired absolute stock level for that accessory rather
+// than a delta.
 type FileInboundItem struct {
-	Name     string `json:"name"`
-	Quantity int64  `json:"quantity"`
+	Name        string `json:"name"`
+	Quantity    int64  `json:"quantity"`
+	Calibration bool   `json:"calibration,omitempty"`
 }
 
 // FileInboundResult summarises a file-based batch inbound.
@@ -592,10 +764,14 @@ func (s *StockService) FileInbound(ctx context.Context, items []FileInboundItem)
 		if name == "" {
 			return FileInboundResult{}, fmt.Errorf("%w: row %d: name is required", ErrInvalidInput, i)
 		}
-		if it.Quantity <= 0 {
+		if it.Calibration {
+			if it.Quantity < 0 {
+				return FileInboundResult{}, fmt.Errorf("%w: row %d: quantity (target) must be non-negative", ErrInvalidInput, i)
+			}
+		} else if it.Quantity <= 0 {
 			return FileInboundResult{}, fmt.Errorf("%w: row %d: quantity must be positive", ErrInvalidInput, i)
 		}
-		trimmed[i] = FileInboundItem{Name: name, Quantity: it.Quantity}
+		trimmed[i] = FileInboundItem{Name: name, Quantity: it.Quantity, Calibration: it.Calibration}
 	}
 	items = trimmed
 
@@ -604,6 +780,7 @@ func (s *StockService) FileInbound(ctx context.Context, items []FileInboundItem)
 	type row struct {
 		acc     domain.Accessory
 		qty     int64
+		cal     bool
 		created bool
 	}
 	rows := make([]row, len(items))
@@ -623,6 +800,7 @@ func (s *StockService) FileInbound(ctx context.Context, items []FileInboundItem)
 		}
 		rows[i].acc = a
 		rows[i].qty = it.Quantity
+		rows[i].cal = it.Calibration
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -652,17 +830,60 @@ func (s *StockService) FileInbound(ctx context.Context, items []FileInboundItem)
 		if err != nil {
 			return FileInboundResult{}, fmt.Errorf("row %d get stock: %w", i, err)
 		}
-		newStock := cur + r.qty
-		if err := s.acc.SetStock(ctx, tx, r.acc.ID, newStock); err != nil {
+		if !r.cal {
+			newStock := cur + r.qty
+			if err := s.acc.SetStock(ctx, tx, r.acc.ID, newStock); err != nil {
+				return FileInboundResult{}, fmt.Errorf("row %d set stock: %w", i, err)
+			}
+			flow := domain.InventoryFlow{
+				AccessoryID:  r.acc.ID,
+				Type:         domain.FlowTypeIn,
+				Quantity:     r.qty,
+				BalanceAfter: newStock,
+				Remark:       "文件批量入库",
+			}
+			if err := flow.Validate(); err != nil {
+				return FileInboundResult{}, fmt.Errorf("row %d validate flow: %w", i, err)
+			}
+			id, err := s.flow.Insert(ctx, tx, flow)
+			if err != nil {
+				return FileInboundResult{}, fmt.Errorf("row %d insert flow: %w", i, err)
+			}
+			flow.ID = id
+			result.Flows = append(result.Flows, flow)
+			result.IDs = append(result.IDs, id)
+			result.CreatedNames[i] = r.created
+			continue
+		}
+		// Calibration row: target = r.qty, delta = target − cur.
+		target := r.qty
+		delta := target - cur
+		if delta == 0 {
+			result.Flows = append(result.Flows, domain.InventoryFlow{
+				AccessoryID:  r.acc.ID,
+				Type:         domain.FlowTypeIn,
+				BalanceAfter: cur,
+				Remark:       "文件批量校准",
+			})
+			result.IDs = append(result.IDs, 0)
+			result.CreatedNames[i] = r.created
+			continue
+		}
+		flowType := domain.FlowTypeIn
+		flowQty := delta
+		if delta < 0 {
+			flowType = domain.FlowTypeOut
+			flowQty = -delta
+		}
+		if err := s.acc.SetStock(ctx, tx, r.acc.ID, target); err != nil {
 			return FileInboundResult{}, fmt.Errorf("row %d set stock: %w", i, err)
 		}
-
 		flow := domain.InventoryFlow{
 			AccessoryID:  r.acc.ID,
-			Type:         domain.FlowTypeIn,
-			Quantity:     r.qty,
-			BalanceAfter: newStock,
-			Remark:       "文件批量入库",
+			Type:         flowType,
+			Quantity:     flowQty,
+			BalanceAfter: target,
+			Remark:       "文件批量校准",
 		}
 		if err := flow.Validate(); err != nil {
 			return FileInboundResult{}, fmt.Errorf("row %d validate flow: %w", i, err)

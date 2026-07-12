@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
 import AccessoryList from './pages/AccessoryList';
 import Inbound from './pages/Inbound';
+import Calibration from './pages/Calibration';
 import Outbound from './pages/Outbound';
 import Flows from './pages/Flows';
 import Replenishment from './pages/Replenishment';
@@ -12,6 +13,7 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 const navItems = [
   { to: '/accessories', label: '配件' },
   { to: '/inbound', label: '入库' },
+  { to: '/calibration', label: '校准' },
   { to: '/outbound', label: '出库' },
   { to: '/flows', label: '流水' },
   { to: '/replenishment', label: '补货' },
@@ -54,6 +56,7 @@ export default function App() {
           <Route path="/" element={<AccessoryList />} />
           <Route path="/accessories" element={<AccessoryList />} />
           <Route path="/inbound" element={<Inbound />} />
+          <Route path="/calibration" element={<Calibration />} />
           <Route path="/outbound" element={<Outbound />} />
           <Route path="/flows" element={<Flows />} />
           <Route path="/replenishment" element={<Replenishment />} />

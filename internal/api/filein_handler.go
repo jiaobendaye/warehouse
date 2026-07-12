@@ -53,9 +53,15 @@ type FileInboundResult struct {
 // row 0 is the header, rows 1..N are [name, qty] data. Names are trimmed;
 // non-positive or non-numeric qty rows are skipped; duplicate names are
 // summed before execution.
+//
+// Optional form field "calibration" (bool) flips the second column
+// from "delta to add" to "target stock to set" — when present and true,
+// every row is a calibration, the parser keeps LAST-wins on duplicate
+// names (since calibration is a set-to-X op), and the response shape
+// stays the same as the inbound case.
 func (h *FileInboundHandler) Inbound(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
-	entries, err := parseXlsxInbound(r)
+	calibration, entries, err := parseXlsxInboundWithMode(r)
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
@@ -67,7 +73,7 @@ func (h *FileInboundHandler) Inbound(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]service.FileInboundItem, 0, len(entries))
 	for _, e := range entries {
-		items = append(items, service.FileInboundItem{Name: e.name, Quantity: e.qty})
+		items = append(items, service.FileInboundItem{Name: e.name, Quantity: e.qty, Calibration: calibration})
 	}
 
 	res, err := h.stockSvc.FileInbound(r.Context(), items)
@@ -119,10 +125,79 @@ type fileInboundEntry struct {
 // the user changing the column header text. Column count > 1 is also
 // required so we don't misread a single-column sheet.
 func parseXlsxInbound(r *http.Request) ([]fileInboundEntry, error) {
+	_, entries, err := parseXlsxInboundWithMode(r)
+	return entries, err
+}
+
+// parseXlsxInboundWithMode is the form-aware variant: it reads the
+// optional "calibration" multipart field and aggregates duplicate names
+// according to the mode.
+//
+//   - calibration=false (default): same-name rows SUM their quantities,
+//     matching parseXlsxInbound's historical behaviour for file_inbound.
+//   - calibration=true: same-name rows use LAST-wins, since calibration
+//     is a set-to-X op — the later row reflects the user's most recent
+//     intent. This is the only behavioural split between the two modes;
+//     the xlsx-reading and per-row validation are shared.
+func parseXlsxInboundWithMode(r *http.Request) (calibration bool, _ []fileInboundEntry, retErr error) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+		return false, nil, fmt.Errorf("failed to parse multipart form: %w", err)
+	}
+	calibration = parseBoolFormField(r, "calibration")
+
+	rawRows, err := readXlsxNameQty(r, calibration)
+	if err != nil {
+		return calibration, nil, err
 	}
 
+	aggMap := make(map[string]*fileInboundEntry)
+	order := make([]string, 0) // preserves first-seen order for stable output
+	for _, rr := range rawRows {
+		if calibration {
+			// Last-wins: overwrite the previous entry for this name
+			// if one exists. Order is preserved by the first-seen
+			// name so the response stays indexable.
+			if existing, ok := aggMap[rr.name]; ok {
+				existing.qty = rr.qty
+				continue
+			}
+			aggMap[rr.name] = &fileInboundEntry{name: rr.name, qty: rr.qty}
+			order = append(order, rr.name)
+			continue
+		}
+		if existing, ok := aggMap[rr.name]; ok {
+			existing.qty += rr.qty
+			continue
+		}
+		aggMap[rr.name] = &fileInboundEntry{name: rr.name, qty: rr.qty}
+		order = append(order, rr.name)
+	}
+
+	out := make([]fileInboundEntry, 0, len(order))
+	for _, n := range order {
+		out = append(out, *aggMap[n])
+	}
+	return calibration, out, nil
+}
+
+// xlsxNameQtyRow is one trimmed, parsed data row from the inbound xlsx,
+// before per-mode aggregation. It mirrors fileInboundEntry so the
+// aggregation step is mechanical.
+type xlsxNameQtyRow struct {
+	name string
+	qty  int64
+}
+
+// readXlsxNameQty reads the FIRST sheet and returns the trimmed,
+// numeric, non-empty data rows. Header / qty-validation rules are shared
+// between inbound and calibration modes.
+//
+// In inbound mode (calibration=false) rows with qty <= 0 are skipped —
+// that matches parseXlsxInbound's historical behaviour. In calibration
+// mode (calibration=true) qty=0 is allowed (the target stock might be
+// zero) but negative rows are still skipped, since a target stock cannot
+// be negative.
+func readXlsxNameQty(r *http.Request, calibration bool) ([]xlsxNameQtyRow, error) {
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		return nil, fmt.Errorf("missing 'file' field in form: %w", err)
@@ -165,8 +240,7 @@ func parseXlsxInbound(r *http.Request) ([]fileInboundEntry, error) {
 		return nil, fmt.Errorf("first sheet header is empty in column A — expected 'name' column")
 	}
 
-	aggMap := make(map[string]*fileInboundEntry)
-	order := make([]string, 0) // preserves first-seen order for stable output
+	out := make([]xlsxNameQtyRow, 0)
 	for rowIdx := 1; rowIdx < len(rows); rowIdx++ {
 		row := rows[rowIdx]
 		if len(row) < 2 {
@@ -177,7 +251,6 @@ func parseXlsxInbound(r *http.Request) ([]fileInboundEntry, error) {
 		if name == "" || qtyStr == "" {
 			continue
 		}
-
 		// qty may arrive as a string ("5") or, for spreadsheets
 		// written by code, an int cell. excelize returns numbers as
 		// strings too, but defensively handle both.
@@ -187,21 +260,29 @@ func parseXlsxInbound(r *http.Request) ([]fileInboundEntry, error) {
 		} else {
 			continue
 		}
-		if qty <= 0 {
+		// Inbound mode: skip non-positive qty. Calibration mode: only
+		// skip negative qty (target stock of zero is a valid setting).
+		if calibration {
+			if qty < 0 {
+				continue
+			}
+		} else if qty <= 0 {
 			continue
 		}
-
-		if existing, ok := aggMap[name]; ok {
-			existing.qty += qty
-		} else {
-			aggMap[name] = &fileInboundEntry{name: name, qty: qty}
-			order = append(order, name)
-		}
-	}
-
-	out := make([]fileInboundEntry, 0, len(order))
-	for _, n := range order {
-		out = append(out, *aggMap[n])
+		out = append(out, xlsxNameQtyRow{name: name, qty: qty})
 	}
 	return out, nil
+}
+
+// parseBoolFormField reads a multipart form value as a bool. Accepts
+// "1"/"true"/"TRUE"/"True" as true; "0"/"false"/empty/missing as false.
+// Anything else returns false rather than failing the upload — callers
+// that need strict parsing should validate before submitting.
+func parseBoolFormField(r *http.Request, name string) bool {
+	v := strings.TrimSpace(r.FormValue(name))
+	switch v {
+	case "1", "true", "TRUE", "True":
+		return true
+	}
+	return false
 }

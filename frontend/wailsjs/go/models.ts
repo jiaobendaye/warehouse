@@ -195,6 +195,7 @@ export namespace service {
 	    remark?: string;
 	    occurred_at?: string;
 	    client_ref?: string;
+	    calibration?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new InboundCmd(source);
@@ -208,6 +209,7 @@ export namespace service {
 	        this.remark = source["remark"];
 	        this.occurred_at = source["occurred_at"];
 	        this.client_ref = source["client_ref"];
+	        this.calibration = source["calibration"];
 	    }
 	}
 	export class OutboundCmd {

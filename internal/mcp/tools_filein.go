@@ -22,7 +22,8 @@ import (
 
 // fileInboundInput is the JSON shape for the stock.file_inbound tool.
 type fileInboundInput struct {
-	FilePath string `json:"file_path" jsonschema:"absolute path to the xlsx file"`
+	FilePath    string `json:"file_path" jsonschema:"absolute path to the xlsx file"`
+	Calibration bool   `json:"calibration,omitempty" jsonschema:"when true the second column is the target stock level rather than a delta"`
 }
 
 // fileInboundItem is one row in the response.
@@ -46,9 +47,9 @@ type fileInboundOutput struct {
 func registerFileInboundTools(srv *mcpsdk.Server, stockSvc *service.StockService) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name:        "stock.file_inbound",
-		Description: "Read an xlsx file (first sheet) where row 0 is a header and rows 1..N are [name, qty] pairs. Auto-creates missing accessories and records an inbound flow for every row in a single transaction.",
+		Description: "Read an xlsx file (first sheet) where row 0 is a header and rows 1..N are [name, qty] pairs. Auto-creates missing accessories and records an inbound flow for every row in a single transaction. Pass calibration=true to interpret the qty column as the desired absolute stock level (set-to-X semantics) instead of a delta.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in fileInboundInput) (*mcpsdk.CallToolResult, fileInboundOutput, error) {
-		entries, err := parseXlsxInboundFile(in.FilePath)
+		entries, err := parseXlsxInboundFile(in.FilePath, in.Calibration)
 		if err != nil {
 			return nil, fileInboundOutput{}, fmt.Errorf("parse xlsx: %w", err)
 		}
@@ -58,7 +59,7 @@ func registerFileInboundTools(srv *mcpsdk.Server, stockSvc *service.StockService
 
 		items := make([]service.FileInboundItem, 0, len(entries))
 		for _, e := range entries {
-			items = append(items, service.FileInboundItem{Name: e.name, Quantity: e.qty})
+			items = append(items, service.FileInboundItem{Name: e.name, Quantity: e.qty, Calibration: in.Calibration})
 		}
 		res, err := stockSvc.FileInbound(ctx, items)
 		if err != nil {
@@ -95,10 +96,14 @@ type fileInboundAggEntry struct {
 
 // parseXlsxInboundFile is the MCP-side counterpart of api.parseXlsxInbound.
 // Both follow the same rules (first sheet, header row 0, [name, qty] data
-// rows, trim names, sum duplicates, skip non-positive/non-numeric qty).
+// rows, trim names, dedup duplicates, skip non-positive/non-numeric qty).
 // The duplication is intentional: the MCP layer is an alternate transport
 // that may be embedded in agents which don't go through the HTTP handler.
-func parseXlsxInboundFile(path string) ([]fileInboundAggEntry, error) {
+//
+// When calibration=true, duplicate names use LAST-wins and qty=0 rows are
+// kept (target stock of zero is valid); otherwise the inbound behaviour
+// (sum on duplicate names, skip qty<=0) is preserved.
+func parseXlsxInboundFile(path string, calibration bool) ([]fileInboundAggEntry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
@@ -140,11 +145,18 @@ func parseXlsxInboundFile(path string) ([]fileInboundAggEntry, error) {
 			continue
 		}
 		qty, err := strconv.ParseInt(qtyStr, 10, 64)
-		if err != nil || qty <= 0 {
+		if err != nil || qty < 0 {
+			continue
+		}
+		if !calibration && qty <= 0 {
 			continue
 		}
 		if existing, ok := aggMap[name]; ok {
-			existing.qty += qty
+			if calibration {
+				existing.qty = qty // last-wins
+			} else {
+				existing.qty += qty
+			}
 		} else {
 			aggMap[name] = &fileInboundAggEntry{name: name, qty: qty}
 			order = append(order, name)

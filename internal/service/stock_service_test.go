@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -1103,4 +1104,286 @@ func lookupName(t *testing.T, acc *repo.AccessoryRepo, id int64) string {
 		t.Fatalf("lookup id %d: %v", id, err)
 	}
 	return a.Name
+}
+
+// --- Calibration mode (InboundCmd.Calibration = true) -----------------
+//
+// Calibration reuses InboundCmd/BatchInbound/FileInbound with the
+// Calibration flag set. The semantics flip from "add quantity" to
+// "set stock to quantity": the service computes delta = target − cur
+// and writes an 'in' flow (delta > 0), 'out' flow (delta < 0), or no
+// row at all (delta == 0).
+
+func TestStockService_Calibration_RaiseStock_WritesInFlow(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "CAL-RAISE", 4)
+
+	got, err := svc.Inbound(ctx, service.InboundCmd{
+		AccessoryID: a.ID,
+		Quantity:    10, // target stock level
+		UnitCost:    2.5,
+		Remark:      "stock count",
+		Calibration: true,
+	})
+	if err != nil {
+		t.Fatalf("Inbound(calibration): %v", err)
+	}
+	if got.Type != domain.FlowTypeIn {
+		t.Fatalf("expected type=in (delta > 0), got %q", got.Type)
+	}
+	if got.Quantity != 6 {
+		t.Fatalf("expected quantity=delta=6, got %d", got.Quantity)
+	}
+	if got.BalanceAfter != 10 {
+		t.Fatalf("expected balance_after=10 (target), got %d", got.BalanceAfter)
+	}
+	if !strings.HasPrefix(got.Remark, "[校准]") {
+		t.Fatalf("expected remark to start with [校准], got %q", got.Remark)
+	}
+	if s := currentStock(t, acc, a.ID); s != 10 {
+		t.Fatalf("expected stock=10, got %d", s)
+	}
+	if n := flowCount(t, fr, a.ID); n != 1 {
+		t.Fatalf("expected 1 flow row, got %d", n)
+	}
+}
+
+func TestStockService_Calibration_LowerStock_WritesOutFlow(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "CAL-LOWER", 9)
+
+	got, err := svc.Inbound(ctx, service.InboundCmd{
+		AccessoryID: a.ID,
+		Quantity:    3, // target below current
+		Remark:      "shelf count",
+		Calibration: true,
+	})
+	if err != nil {
+		t.Fatalf("Inbound(calibration): %v", err)
+	}
+	if got.Type != domain.FlowTypeOut {
+		t.Fatalf("expected type=out (delta < 0), got %q", got.Type)
+	}
+	if got.Quantity != 6 {
+		t.Fatalf("expected quantity=abs(delta)=6, got %d", got.Quantity)
+	}
+	if got.BalanceAfter != 3 {
+		t.Fatalf("expected balance_after=3 (target), got %d", got.BalanceAfter)
+	}
+	if !strings.HasPrefix(got.Remark, "[校准]") {
+		t.Fatalf("expected remark to start with [校准], got %q", got.Remark)
+	}
+	if s := currentStock(t, acc, a.ID); s != 3 {
+		t.Fatalf("expected stock=3, got %d", s)
+	}
+	if n := flowCount(t, fr, a.ID); n != 1 {
+		t.Fatalf("expected 1 flow row, got %d", n)
+	}
+}
+
+func TestStockService_Calibration_NoChange_WritesNoFlow(t *testing.T) {
+	// Target == current means the calibration is a no-op. The service
+	// must not write a flow row (schema disallows quantity=0 for in/out)
+	// but should still return a populated InventoryFlow so the caller
+	// can read the unchanged balance_after.
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "CAL-ZERO", 7)
+
+	got, err := svc.Inbound(ctx, service.InboundCmd{
+		AccessoryID: a.ID,
+		Quantity:    7, // target equals current
+		Calibration: true,
+	})
+	if err != nil {
+		t.Fatalf("Inbound(calibration no-op): %v", err)
+	}
+	if got.ID != 0 {
+		t.Fatalf("expected no flow row (ID=0), got ID=%d", got.ID)
+	}
+	if got.BalanceAfter != 7 {
+		t.Fatalf("expected balance_after=7 (unchanged), got %d", got.BalanceAfter)
+	}
+	if s := currentStock(t, acc, a.ID); s != 7 {
+		t.Fatalf("stock should be unchanged at 7, got %d", s)
+	}
+	if n := flowCount(t, fr, a.ID); n != 0 {
+		t.Fatalf("expected 0 flow rows on no-op, got %d", n)
+	}
+}
+
+func TestStockService_Calibration_NegativeTarget_Rejected(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "CAL-NEG", 5)
+
+	_, err := svc.Inbound(ctx, service.InboundCmd{
+		AccessoryID: a.ID,
+		Quantity:    -1,
+		Calibration: true,
+	})
+	if !errors.Is(err, service.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for negative target, got %v", err)
+	}
+	if s := currentStock(t, acc, a.ID); s != 5 {
+		t.Fatalf("stock should be unchanged, got %d", s)
+	}
+	if n := flowCount(t, fr, a.ID); n != 0 {
+		t.Fatalf("expected 0 flow rows, got %d", n)
+	}
+}
+
+func TestStockService_Calibration_RegularInbound_StillPositiveOnly(t *testing.T) {
+	// Sanity: with Calibration=false (the default), the existing rule
+	// that quantity must be > 0 still applies — calibration mode should
+	// not loosen validation on regular inbound calls.
+	svc, acc, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "CAL-REG", 3)
+	_, err := svc.Inbound(ctx, service.InboundCmd{
+		AccessoryID: a.ID,
+		Quantity:    0,
+	})
+	if !errors.Is(err, service.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for qty=0 (regular inbound), got %v", err)
+	}
+}
+
+// --- Batch calibration ------------------------------------------------
+
+func TestStockService_BatchInbound_Calibration_Mixed(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a1 := seedAccessoryWithStock(t, acc, "BC-R", 4) // raise
+	a2 := seedAccessoryWithStock(t, acc, "BC-L", 9) // lower
+	a3 := seedAccessoryWithStock(t, acc, "BC-S", 7) // same (no-op)
+
+	res, err := svc.BatchInbound(ctx, []service.InboundCmd{
+		{AccessoryID: a1.ID, Quantity: 10, Calibration: true},
+		{AccessoryID: a2.ID, Quantity: 3, Calibration: true},
+		{AccessoryID: a3.ID, Quantity: 7, Calibration: true},
+	})
+	if err != nil {
+		t.Fatalf("BatchInbound(calibration): %v", err)
+	}
+	if res.Accepted != 3 {
+		t.Fatalf("expected accepted=3, got %d", res.Accepted)
+	}
+	if s := currentStock(t, acc, a1.ID); s != 10 {
+		t.Fatalf("a1 stock: expected 10, got %d", s)
+	}
+	if s := currentStock(t, acc, a2.ID); s != 3 {
+		t.Fatalf("a2 stock: expected 3, got %d", s)
+	}
+	if s := currentStock(t, acc, a3.ID); s != 7 {
+		t.Fatalf("a3 stock: expected 7 (unchanged), got %d", s)
+	}
+	if n := flowCount(t, fr, a1.ID); n != 1 {
+		t.Fatalf("a1 flows: expected 1, got %d", n)
+	}
+	if n := flowCount(t, fr, a2.ID); n != 1 {
+		t.Fatalf("a2 flows: expected 1, got %d", n)
+	}
+	if n := flowCount(t, fr, a3.ID); n != 0 {
+		t.Fatalf("a3 flows: expected 0 (no-op), got %d", n)
+	}
+	// The no-op row's flow has ID=0 in the response; the others have real IDs.
+	if res.Flows[2].ID != 0 {
+		t.Fatalf("no-op flow ID = %d, want 0", res.Flows[2].ID)
+	}
+	if res.IDs[2] != 0 {
+		t.Fatalf("no-op flow IDs[2] = %d, want 0", res.IDs[2])
+	}
+}
+
+func TestStockService_BatchInbound_Calibration_NegativeRejected(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	a := seedAccessoryWithStock(t, acc, "BC-NEG", 5)
+	_, err := svc.BatchInbound(ctx, []service.InboundCmd{
+		{AccessoryID: a.ID, Quantity: -2, Calibration: true},
+	})
+	if !errors.Is(err, service.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if s := currentStock(t, acc, a.ID); s != 5 {
+		t.Fatalf("stock should be unchanged, got %d", s)
+	}
+	if n := flowCount(t, fr, a.ID); n != 0 {
+		t.Fatalf("expected 0 flows, got %d", n)
+	}
+}
+
+// --- FileInbound calibration -----------------------------------------
+
+func TestStockService_FileInbound_Calibration_SetToTarget(t *testing.T) {
+	svc, acc, fr, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Pre-seed one accessory so the test exercises both branches.
+	seedAccessoryWithStock(t, acc, "FCE-EXIST", 7)
+
+	res, err := svc.FileInbound(ctx, []service.FileInboundItem{
+		{Name: "FCE-EXIST", Quantity: 3, Calibration: true},  // 7 → 3 (lower)
+		{Name: "FCE-NEW-1", Quantity: 5, Calibration: true},  // auto-create, set to 5
+		{Name: "FCE-NEW-2", Quantity: 0, Calibration: true},  // qty=0 allowed only in calibration mode
+	})
+	if err != nil {
+		t.Fatalf("FileInbound(calibration): %v", err)
+	}
+	if res.Inbound != 3 {
+		t.Fatalf("inbound = %d, want 3", res.Inbound)
+	}
+	if res.Created != 2 {
+		t.Fatalf("created = %d, want 2", res.Created)
+	}
+	if s := currentStock(t, acc, mustAccessoryID(t, acc, "FCE-EXIST")); s != 3 {
+		t.Errorf("FCE-EXIST stock = %d, want 3", s)
+	}
+	if s := currentStock(t, acc, mustAccessoryID(t, acc, "FCE-NEW-1")); s != 5 {
+		t.Errorf("FCE-NEW-1 stock = %d, want 5", s)
+	}
+	if s := currentStock(t, acc, mustAccessoryID(t, acc, "FCE-NEW-2")); s != 0 {
+		t.Errorf("FCE-NEW-2 stock = %d, want 0", s)
+	}
+	// FCE-EXIST lower writes an 'out' flow; FCE-NEW-1 (target=5 > 0)
+	// writes an 'in' flow; FCE-NEW-2 is target=0 on a freshly-created
+	// accessory (delta=0) so no ledger row is written.
+	if n := flowCount(t, fr, mustAccessoryID(t, acc, "FCE-EXIST")); n != 1 {
+		t.Errorf("FCE-EXIST flows = %d, want 1", n)
+	}
+	if n := flowCount(t, fr, mustAccessoryID(t, acc, "FCE-NEW-1")); n != 1 {
+		t.Errorf("FCE-NEW-1 flows = %d, want 1", n)
+	}
+	if n := flowCount(t, fr, mustAccessoryID(t, acc, "FCE-NEW-2")); n != 0 {
+		t.Errorf("FCE-NEW-2 flows = %d, want 0 (target=0 on fresh accessory)", n)
+	}
+}
+
+func TestStockService_FileInbound_Calibration_RejectsNegativeTarget(t *testing.T) {
+	svc, _, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	_, err := svc.FileInbound(context.Background(), []service.FileInboundItem{
+		{Name: "BAD", Quantity: -1, Calibration: true},
+	})
+	if !errors.Is(err, service.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
 }
