@@ -49,6 +49,12 @@ type accessoryListOutput struct {
 	Total int                `json:"total"`
 }
 
+// accessoryListStallsOutput mirrors the REST /api/v1/accessories/stalls
+// response shape: a list of distinct stall values currently in use.
+type accessoryListStallsOutput struct {
+	Stalls []string `json:"stalls" jsonschema:"Distinct stall (档口) values currently in use, sorted alphabetically (case-insensitive)"`
+}
+
 // accessoryGetInput — exactly one of id or name must be set.
 type accessoryGetInput struct {
 	ID   *int64  `json:"id,omitempty"   jsonschema:"accessory id (mutually exclusive with name)"`
@@ -120,6 +126,17 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService, e
 			return nil, accessoryListOutput{}, rpcError(err)
 		}
 		return nil, accessoryListOutput{Items: rows, Total: total}, nil
+	})
+
+	mcpsdk.AddTool(srv, &mcpsdk.Tool{
+		Name:        "accessory.list_stalls",
+		Description: "List all distinct stall (档口) values currently in use. Mirrors GET /api/v1/accessories/stalls.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, accessoryListStallsOutput, error) {
+		stalls, err := svc.ListStalls(ctx)
+		if err != nil {
+			return nil, accessoryListStallsOutput{}, rpcError(err)
+		}
+		return nil, accessoryListStallsOutput{Stalls: stalls}, nil
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{

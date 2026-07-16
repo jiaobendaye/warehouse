@@ -6,7 +6,7 @@
 //   - TranslateError maps the four service sentinels to the JSON-RPC codes
 //     documented in the spec (NOT_FOUND=-32004, CONFLICT=-32005,
 //     BAD_REQUEST=-32600).
-//   - tools/list returns exactly the 18 tools named in the spec.
+//   - tools/list returns exactly the 19 tools named in the spec.
 //   - tool calls exercise the underlying service methods, with both happy
 //     paths and error paths, and surface the right JSON-RPC error codes on
 //     failure.
@@ -24,14 +24,16 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/xuri/excelize/v2"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/xuri/excelize/v2"
 
 	"github.com/jiaobendaye/warehouse/internal/db"
+	"github.com/jiaobendaye/warehouse/internal/domain"
 	"github.com/jiaobendaye/warehouse/internal/mcp"
 	"github.com/jiaobendaye/warehouse/internal/repo"
 
@@ -132,7 +134,7 @@ func TestTranslateError_WrappedSentinels(t *testing.T) {
 }
 
 // ------------------------------------------------------------------
-// tools/list — 18 tools exactly
+// tools/list — 19 tools exactly
 // ------------------------------------------------------------------
 
 func TestToolsList_All(t *testing.T) {
@@ -154,6 +156,7 @@ func TestToolsList_All(t *testing.T) {
 
 	want := []string{
 		"accessory.list",
+		"accessory.list_stalls",
 		"accessory.get",
 		"accessory.create",
 		"accessory.update",
@@ -241,6 +244,58 @@ func TestTool_AccessoryCreateAndGet(t *testing.T) {
 	}
 	if got.ID != created.ID || got.Name != "保护壳-MCP" {
 		t.Fatalf("got %+v, want id=%d name=保护壳-MCP", got, created.ID)
+	}
+}
+
+// TestTool_AccessoryListStalls seeds three accessories under two distinct
+// stalls (one stall repeated, in non-alphabetical insertion order) and
+// asserts the tool returns the distinct stalls sorted alphabetically
+// (case-insensitive, matching the SQL `COLLATE NOCASE` order).
+func TestTool_AccessoryListStalls(t *testing.T) {
+	svcs := newTestServices(t)
+
+	// Seed via the underlying service so we can set a non-default stall.
+	// AccessoryService.Create accepts a full domain.Accessory including Stall.
+	seed := []struct {
+		name  string
+		stall string
+	}{
+		{"保护壳-MCP-A", "档口B"},
+		{"保护壳-MCP-B", "档口A"},
+		{"保护壳-MCP-C", "档口A"}, // duplicate stall on purpose
+	}
+	for _, s := range seed {
+		if _, err := svcs.Accessory.Create(context.Background(), domain.Accessory{
+			Name:              s.name,
+			Stall:             s.stall,
+			LowStockThreshold: 5,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", s.name, err)
+		}
+	}
+
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	res, err := session.CallTool(context.Background(),
+		testCallToolParams{Name: "accessory.list_stalls"}.toParams())
+	if err != nil {
+		t.Fatalf("accessory.list_stalls: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("accessory.list_stalls IsError: %+v", res)
+	}
+
+	var out struct {
+		Stalls []string `json:"stalls"`
+	}
+	if err := decodeStructured(res.StructuredContent, &out); err != nil {
+		t.Fatalf("decode list_stalls: %v", err)
+	}
+	want := []string{"档口A", "档口B"}
+	if !reflect.DeepEqual(out.Stalls, want) {
+		t.Fatalf("stalls = %v, want %v", out.Stalls, want)
 	}
 }
 
@@ -508,8 +563,8 @@ func TestStdioRoundtrip_Minimal(t *testing.T) {
 		t.Fatalf("want result, got %v", resp)
 	}
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 18 {
-		t.Fatalf("want 18 tools, got %d", len(tools))
+	if len(tools) != 19 {
+		t.Fatalf("want 19 tools, got %d", len(tools))
 	}
 
 	// Shutdown: close client-side writer; cancel context.
