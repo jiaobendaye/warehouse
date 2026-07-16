@@ -299,6 +299,89 @@ func TestTool_AccessoryListStalls(t *testing.T) {
 	}
 }
 
+// TestTool_AccessoryList_WithStallFilter seeds accessories under two stalls
+// and asserts that accessory.list with ?stall= returns only the matching
+// rows. Also asserts that no stall filter returns the full set, so we
+// know the filter actually narrows rather than just being a no-op.
+func TestTool_AccessoryList_WithStallFilter(t *testing.T) {
+	svcs := newTestServices(t)
+
+	seed := []struct {
+		name  string
+		stall string
+	}{
+		{"A1", "档口A"},
+		{"B1", "档口B"},
+		{"A2", "档口A"},
+	}
+	for _, s := range seed {
+		if _, err := svcs.Accessory.Create(context.Background(), domain.Accessory{
+			Name:              s.name,
+			Stall:             s.stall,
+			LowStockThreshold: 5,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", s.name, err)
+		}
+	}
+
+	srv := mcp.NewServer(svcs)
+	_, session := newInMemoryClient(t, srv)
+	defer session.Close()
+
+	// With filter: should only return the 2 档口A rows.
+	filtered, err := session.CallTool(context.Background(), testCallToolParams{
+		Name:      "accessory.list",
+		Arguments: map[string]any{"stall": "档口A"},
+	}.toParams())
+	if err != nil {
+		t.Fatalf("accessory.list (with stall): %v", err)
+	}
+	if filtered.IsError {
+		t.Fatalf("accessory.list (with stall) IsError: %+v", filtered)
+	}
+	var fOut struct {
+		Items []struct {
+			Name  string `json:"name"`
+			Stall string `json:"stall"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := decodeStructured(filtered.StructuredContent, &fOut); err != nil {
+		t.Fatalf("decode filtered list: %v", err)
+	}
+	if fOut.Total != 2 {
+		t.Fatalf("filtered total = %d, want 2", fOut.Total)
+	}
+	if len(fOut.Items) != 2 {
+		t.Fatalf("filtered items len = %d, want 2", len(fOut.Items))
+	}
+	for _, it := range fOut.Items {
+		if it.Stall != "档口A" {
+			t.Errorf("filtered item %q stall = %q, want 档口A", it.Name, it.Stall)
+		}
+	}
+
+	// Without filter: should return all 3 rows.
+	all, err := session.CallTool(context.Background(), testCallToolParams{
+		Name: "accessory.list",
+	}.toParams())
+	if err != nil {
+		t.Fatalf("accessory.list (no stall): %v", err)
+	}
+	if all.IsError {
+		t.Fatalf("accessory.list (no stall) IsError: %+v", all)
+	}
+	var aOut struct {
+		Total int `json:"total"`
+	}
+	if err := decodeStructured(all.StructuredContent, &aOut); err != nil {
+		t.Fatalf("decode unfiltered list: %v", err)
+	}
+	if aOut.Total != 3 {
+		t.Fatalf("unfiltered total = %d, want 3", aOut.Total)
+	}
+}
+
 func TestTool_AccessoryGet_NotFound_Returns_32004(t *testing.T) {
 	// The official SDK has a code-collision quirk: it reserves -32004 for
 	// ErrServerClosing and rewrites any client-side error matching that code

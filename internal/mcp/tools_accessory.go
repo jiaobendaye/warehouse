@@ -39,6 +39,7 @@ import (
 // accessoryListInput is the JSON shape for accessory.list.
 type accessoryListInput struct {
 	Q      string `json:"q,omitempty"      jsonschema:"search query (substring match on name)"`
+	Stall  string `json:"stall,omitempty"  jsonschema:"filter by exact stall name; empty = no filter"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"page size; 0 means default"`
 	Offset int    `json:"offset,omitempty" jsonschema:"page offset"`
 }
@@ -119,9 +120,9 @@ var accessoriesExportHeaders = []string{
 
 func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService, exportsDir, publicBaseURL string) {
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "accessory.list", Description: "List accessories (supports keyword q, paginated).",
+		Name: "accessory.list", Description: "List accessories (supports keyword q, stall filter, paginated).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryListInput) (*mcpsdk.CallToolResult, accessoryListOutput, error) {
-		rows, total, err := svc.List(ctx, in.Q, "", in.Limit, in.Offset)
+		rows, total, err := svc.List(ctx, in.Q, in.Stall, in.Limit, in.Offset)
 		if err != nil {
 			return nil, accessoryListOutput{}, rpcError(err)
 		}
