@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 
@@ -117,6 +118,39 @@ func (h *FileOutboundHandler) Execute(w http.ResponseWriter, r *http.Request) {
 
 // --- xlsx parsing helpers ----------------------------------------------------
 
+// readUploadedXlsxBytes extracts the xlsx payload from a file-upload
+// request. It supports two transports:
+//
+//   - multipart/form-data with a "file" field (the original API shape,
+//     still used by tests and any external caller);
+//   - a raw request body (Content-Type: application/octet-stream or any
+//     non-multipart type), used by the Wails GUI frontend.
+//
+// The raw-body path exists because Windows WebView2 delivers POST bodies
+// to the Wails assetserver with a ContentLength/Content-Length header
+// mismatch that corrupts multipart boundaries by the time the request
+// reaches the embedded HTTP server via the reverse proxy. Sending the
+// xlsx as a plain byte stream sidesteps multipart entirely and is
+// reliable across all transports.
+func readUploadedXlsxBytes(r *http.Request) ([]byte, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			return nil, fmt.Errorf("missing 'file' field in form: %w", err)
+		}
+		defer file.Close()
+		return io.ReadAll(file)
+	}
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read uploaded file: %w", err)
+	}
+	return raw, nil
+}
+
 type aggEntry struct {
 	name string
 	qty  int64
@@ -125,19 +159,9 @@ type aggEntry struct {
 // parseXlsxSummary reads the uploaded xlsx and returns aggregated name→qty
 // from the "汇总" sheet. Callers should already have set MaxBytesReader.
 func parseXlsxSummary(r *http.Request) ([]aggEntry, error) {
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		return nil, fmt.Errorf("failed to parse multipart form: %w", err)
-	}
-
-	file, _, err := r.FormFile("file")
+	raw, err := readUploadedXlsxBytes(r)
 	if err != nil {
-		return nil, fmt.Errorf("missing 'file' field in form: %w", err)
-	}
-	defer file.Close()
-
-	raw, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read uploaded file: %w", err)
+		return nil, err
 	}
 
 	xf, err := excelize.OpenReader(bytes.NewReader(raw))

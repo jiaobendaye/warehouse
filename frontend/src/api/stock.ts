@@ -80,16 +80,32 @@ export interface FileOutboundPreview {
   not_found_count: number;
 }
 
-export async function previewFileOutbound(file: File): Promise<FileOutboundPreview> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch('/api/v1/stock/file_outbound', { method: 'POST', body: form });
+// uploadFile sends the xlsx as a raw byte stream (not multipart/form-data).
+// Multipart uploads are corrupted on Windows when the WebView2 request
+// traverses the Wails assetserver → reverse-proxy → backend path, so we
+// POST the file body directly with an octet-stream content type. The
+// backend handler accepts both shapes.
+async function uploadFile(url: string, file: File): Promise<Response> {
+  const buf = await file.arrayBuffer();
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: buf,
+  });
+}
+
+async function postFile<T>(url: string, file: File): Promise<T> {
+  const res = await uploadFile(url, file);
   if (!res.ok) {
     let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
     try { errBody = await res.json(); } catch {}
     throw errBody;
   }
   return res.json();
+}
+
+export async function previewFileOutbound(file: File): Promise<FileOutboundPreview> {
+  return postFile<FileOutboundPreview>('/api/v1/stock/file_outbound', file);
 }
 
 export interface FileForceOutboundResult {
@@ -101,15 +117,7 @@ export interface FileForceOutboundResult {
 }
 
 export async function executeFileOutbound(file: File): Promise<FileForceOutboundResult> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch('/api/v1/stock/file_outbound/execute', { method: 'POST', body: form });
-  if (!res.ok) {
-    let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
-    try { errBody = await res.json(); } catch {}
-    throw errBody;
-  }
-  return res.json();
+  return postFile<FileForceOutboundResult>('/api/v1/stock/file_outbound/execute', file);
 }
 
 export interface FileInboundItem {
@@ -128,14 +136,9 @@ export interface FileInboundResult {
   items: FileInboundItem[];
 }
 
-export async function executeFileInbound(file: File): Promise<FileInboundResult> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch('/api/v1/stock/file_inbound', { method: 'POST', body: form });
-  if (!res.ok) {
-    let errBody: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
-    try { errBody = await res.json(); } catch {}
-    throw errBody;
-  }
-  return res.json();
+export async function executeFileInbound(file: File, calibration = false): Promise<FileInboundResult> {
+  const url = calibration
+    ? '/api/v1/stock/file_inbound?calibration=true'
+    : '/api/v1/stock/file_inbound';
+  return postFile<FileInboundResult>(url, file);
 }

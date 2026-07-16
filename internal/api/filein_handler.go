@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -140,12 +139,14 @@ func parseXlsxInbound(r *http.Request) ([]fileInboundEntry, error) {
 //     intent. This is the only behavioural split between the two modes;
 //     the xlsx-reading and per-row validation are shared.
 func parseXlsxInboundWithMode(r *http.Request) (calibration bool, _ []fileInboundEntry, retErr error) {
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		return false, nil, fmt.Errorf("failed to parse multipart form: %w", err)
-	}
-	calibration = parseBoolFormField(r, "calibration")
+	calibration = readCalibrationFlag(r)
 
-	rawRows, err := readXlsxNameQty(r, calibration)
+	raw, err := readUploadedXlsxBytes(r)
+	if err != nil {
+		return false, nil, err
+	}
+
+	rawRows, err := parseXlsxNameQty(raw, calibration)
 	if err != nil {
 		return calibration, nil, err
 	}
@@ -188,27 +189,30 @@ type xlsxNameQtyRow struct {
 	qty  int64
 }
 
-// readXlsxNameQty reads the FIRST sheet and returns the trimmed,
-// numeric, non-empty data rows. Header / qty-validation rules are shared
-// between inbound and calibration modes.
+// readCalibrationFlag returns the calibration toggle from whichever
+// transport the caller used: the multipart "calibration" form field, or
+// the ?calibration=true query param for raw-body uploads.
+func readCalibrationFlag(r *http.Request) bool {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		return parseBoolFormField(r, "calibration")
+	}
+	switch strings.ToLower(r.URL.Query().Get("calibration")) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// parseXlsxNameQty reads the FIRST sheet from the supplied raw xlsx bytes
+// and returns the trimmed, numeric, non-empty data rows. Header / qty
+// validation rules are shared between inbound and calibration modes.
 //
 // In inbound mode (calibration=false) rows with qty <= 0 are skipped —
 // that matches parseXlsxInbound's historical behaviour. In calibration
 // mode (calibration=true) qty=0 is allowed (the target stock might be
 // zero) but negative rows are still skipped, since a target stock cannot
 // be negative.
-func readXlsxNameQty(r *http.Request, calibration bool) ([]xlsxNameQtyRow, error) {
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		return nil, fmt.Errorf("missing 'file' field in form: %w", err)
-	}
-	defer file.Close()
-
-	raw, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read uploaded file: %w", err)
-	}
-
+func parseXlsxNameQty(raw []byte, calibration bool) ([]xlsxNameQtyRow, error) {
 	xf, err := excelize.OpenReader(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open xlsx: %w", err)

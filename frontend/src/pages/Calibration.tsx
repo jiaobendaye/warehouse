@@ -154,16 +154,7 @@ export default function Calibration() {
     setSubmitting(true);
     setFResult(null);
     try {
-      const form = new FormData();
-      form.append('file', file);
-      form.append('calibration', 'true');
-      const res = await fetch('/api/v1/stock/file_inbound', { method: 'POST', body: form });
-      if (!res.ok) {
-        let body: any = { error: { code: 'INTERNAL', message: `HTTP ${res.status}` } };
-        try { body = await res.json(); } catch {}
-        throw body;
-      }
-      const data: FileInboundResult = await res.json();
+      const data = await executeFileInbound(file, true);
       setFResult(data);
       const parts: string[] = [`文件校准成功，${data.inbound} 笔`];
       if (data.created > 0) parts.push(`新建 ${data.created} 种`);

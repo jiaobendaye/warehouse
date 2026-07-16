@@ -290,3 +290,78 @@ func TestParseXlsxInbound_RejectsMissingFileField(t *testing.T) {
 		t.Fatal("expected error for missing 'file' field, got nil")
 	}
 }
+
+// buildRawXLSX returns the raw bytes of an in-memory xlsx built by
+// rowBuilder, plus a POST request carrying those bytes as a raw body
+// (Content-Type: application/octet-stream). This mirrors the transport
+// the Wails GUI frontend uses — which avoids multipart because Windows
+// WebView2 corrupts multipart bodies through the assetserver proxy.
+func buildRawXLSX(t *testing.T, url string, rowBuilder func(*excelize.File)) (*http.Request, error) {
+	t.Helper()
+	xf := excelize.NewFile()
+	defer xf.Close()
+	if rowBuilder != nil {
+		rowBuilder(xf)
+	}
+	var buf bytes.Buffer
+	if err := xf.Write(&buf); err != nil {
+		return nil, fmt.Errorf("write xlsx: %w", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, url, &buf)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	return req, nil
+}
+
+// TestParseXlsxInbound_RawBody verifies the raw-body transport path used
+// by the Wails GUI: the xlsx is POSTed as octet-stream bytes, not a
+// multipart form. The parser must accept both shapes.
+func TestParseXlsxInbound_RawBody(t *testing.T) {
+	req, err := buildRawXLSX(t, "/api/v1/stock/file_inbound", func(xf *excelize.File) {
+		putRow(t, xf, 0, "配件", "数量")
+		putRow(t, xf, 1, "薄荷糖支架", "5")
+		putRow(t, xf, 2, "泡泡软胶支架", "30")
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	got, err := runParser(t, req)
+	if err != nil {
+		t.Fatalf("parse raw body: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2; got=%v", len(got), got)
+	}
+	if got[0].name != "薄荷糖支架" || got[0].qty != 5 {
+		t.Errorf("row 0 = %+v, want {薄荷糖支架 5}", got[0])
+	}
+}
+
+// TestParseXlsxInbound_RawBody_CalibrationQuery verifies the calibration
+// flag is read from the ?calibration=true query param on the raw-body
+// path (multipart reads it from a form field instead).
+func TestParseXlsxInbound_RawBody_CalibrationQuery(t *testing.T) {
+	req, err := buildRawXLSX(t, "/api/v1/stock/file_inbound?calibration=true", func(xf *excelize.File) {
+		putRow(t, xf, 0, "配件", "数量")
+		putRow(t, xf, 1, "数据线", "0")
+	})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	calib, entries, err := func() (bool, []fileInboundEntry, error) {
+		req.Body = http.MaxBytesReader(httptest.NewRecorder(), req.Body, 10<<20)
+		return parseXlsxInboundWithMode(req)
+	}()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !calib {
+		t.Fatalf("expected calibration=true from query param, got false")
+	}
+	// qty=0 is allowed in calibration mode but skipped in inbound mode;
+	// keeping it proves the calibration flag took effect.
+	if len(entries) != 1 || entries[0].qty != 0 {
+		t.Fatalf("expected 1 calibration row with qty=0, got %+v", entries)
+	}
+}
