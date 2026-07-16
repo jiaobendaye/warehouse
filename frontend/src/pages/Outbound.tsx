@@ -323,56 +323,69 @@ export default function Outbound() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
             }}>
               <div style={{
-                background: '#fff', padding: 24, borderRadius: 8,
-                minWidth: 500, maxWidth: 700, maxHeight: '80vh', overflowY: 'auto',
+                background: '#fff', borderRadius: 8,
+                minWidth: 500, maxWidth: 700, maxHeight: '80vh',
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
               }}>
-                <h3 style={{ margin: '0 0 12px' }}>确认文件出库</h3>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-                  共 {preview.total_items} 种配件，{(preview.items || []).reduce((s, i) => s + i.quantity, 0) + (preview.not_found || []).reduce((s, n) => s + n.quantity, 0)} 件
-                  {preview.not_found_count > 0 && (
-                    <span style={{ color: '#1890ff' }}>（其中 {preview.not_found_count} 种将自动新建）</span>
-                  )}
+                {/* Sticky header with actions on top */}
+                <div style={{
+                  position: 'sticky', top: 0, zIndex: 10,
+                  background: '#fff', padding: '16px 24px',
+                  borderBottom: '1px solid #eee',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <h3 style={{ margin: 0 }}>确认文件出库</h3>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button style={btnGray} onClick={() => setShowConfirm(false)}>取消</button>
+                      <button style={btnDanger} disabled={submitting} onClick={handleFileOutboundConfirm}>
+                        {submitting ? '出库中…' : '确认出库'}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 13, color: '#666' }}>
+                    共 {preview.total_items} 种配件，{(preview.items || []).reduce((s, i) => s + i.quantity, 0) + (preview.not_found || []).reduce((s, n) => s + n.quantity, 0)} 件
+                    {preview.not_found_count > 0 && (
+                      <span style={{ color: '#1890ff' }}>（其中 {preview.not_found_count} 种将自动新建）</span>
+                    )}
+                  </div>
                 </div>
 
-                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 12 }}>
-                  <thead>
-                    <tr>
-                      <th style={thS}>配件名称</th>
-                      <th style={thS}>出库数量</th>
-                      <th style={thS}>状态</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(preview.items || []).slice(0, 30).map((it, i) => (
-                      <tr key={i} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
-                        <td style={tdS}>{it.name}</td>
-                        <td style={tdS}>{it.quantity}</td>
-                        <td style={tdS}>
-                          {it.current_stock < it.quantity
-                            ? <span style={{ color: '#faad14', fontSize: 12 }}>⚠️ 缺{it.quantity - it.current_stock}（库存→0，阈值+{it.quantity - it.current_stock}）</span>
-                            : <span style={{ color: '#52c41a', fontSize: 12 }}>✅ 库存充足</span>
-                          }
-                        </td>
+                {/* Scrollable body */}
+                <div style={{ overflowY: 'auto', padding: '12px 24px 24px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={thS}>配件名称</th>
+                        <th style={thS}>出库数量</th>
+                        <th style={thS}>状态</th>
                       </tr>
-                    ))}
-                    {(preview.items || []).length > 30 && (
-                      <tr><td style={tdS} colSpan={3}>… 还有 {(preview.items || []).length - 30} 项</td></tr>
-                    )}
-                    {(preview.not_found || []).map((nf, i) => (
-                      <tr key={`nf-${i}`} style={{ background: '#f0f5ff' }}>
-                        <td style={tdS}>{nf.name}</td>
-                        <td style={tdS}>{nf.quantity}</td>
-                        <td style={tdS}><span style={{ color: '#1890ff', fontSize: 12 }}>🆕 自动新建</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button style={btnGray} onClick={() => setShowConfirm(false)}>取消</button>
-                  <button style={btnDanger} disabled={submitting} onClick={handleFileOutboundConfirm}>
-                    {submitting ? '出库中…' : `确认出库`}
-                  </button>
+                    </thead>
+                    <tbody>
+                      {(preview.items || []).slice(0, 30).map((it, i) => (
+                        <tr key={i} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
+                          <td style={tdS}>{it.name}</td>
+                          <td style={tdS}>{it.quantity}</td>
+                          <td style={tdS}>
+                            {it.current_stock < it.quantity
+                              ? <span style={{ color: '#faad14', fontSize: 12 }}>⚠️ 缺{it.quantity - it.current_stock}（库存→0，阈值+{it.quantity - it.current_stock}）</span>
+                              : <span style={{ color: '#52c41a', fontSize: 12 }}>✅ 库存充足</span>
+                            }
+                          </td>
+                        </tr>
+                      ))}
+                      {(preview.items || []).length > 30 && (
+                        <tr><td style={tdS} colSpan={3}>… 还有 {(preview.items || []).length - 30} 项</td></tr>
+                      )}
+                      {(preview.not_found || []).map((nf, i) => (
+                        <tr key={`nf-${i}`} style={{ background: '#f0f5ff' }}>
+                          <td style={tdS}>{nf.name}</td>
+                          <td style={tdS}>{nf.quantity}</td>
+                          <td style={tdS}><span style={{ color: '#1890ff', fontSize: 12 }}>🆕 自动新建</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
