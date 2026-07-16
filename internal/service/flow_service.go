@@ -46,7 +46,7 @@ func NewFlowService(flow *repo.FlowRepo) *FlowService {
 
 // List returns all flows matching the optional type / from / to filters,
 // paginated. No accessory_id filter is applied. occurred_at order is
-// ascending (oldest first).
+// descending (newest first).
 func (s *FlowService) List(ctx context.Context, typ, from, to string, limit, offset int) ([]domain.InventoryFlow, int, error) {
 	if err := validateType(typ); err != nil {
 		return nil, 0, err

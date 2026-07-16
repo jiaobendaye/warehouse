@@ -49,9 +49,9 @@ func seedFlow(t *testing.T, fr *repo.FlowRepo, f domain.InventoryFlow) {
 	}
 }
 
-// List_ByAccessory_ReturnsAscending verifies ListByAccessory returns rows in
-// ascending occurred_at order.
-func TestFlowService_ListByAccessory_Ascending(t *testing.T) {
+// List_ByAccessory_ReturnsDescending verifies ListByAccessory returns rows in
+// descending occurred_at order (newest first).
+func TestFlowService_ListByAccessory_Descending(t *testing.T) {
 	svc, fr, accID, cleanup := newFlowSvc(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -70,14 +70,14 @@ func TestFlowService_ListByAccessory_Ascending(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
-	if rows[0].OccurredAt != "2026-07-01T00:00:00Z" {
-		t.Fatalf("expected first row occurred_at=2026-07-01, got %q", rows[0].OccurredAt)
+	if rows[0].OccurredAt != "2026-07-03T00:00:00Z" {
+		t.Fatalf("expected first row occurred_at=2026-07-03, got %q", rows[0].OccurredAt)
 	}
 	if rows[1].OccurredAt != "2026-07-02T00:00:00Z" {
 		t.Fatalf("expected second row occurred_at=2026-07-02, got %q", rows[1].OccurredAt)
 	}
-	if rows[2].OccurredAt != "2026-07-03T00:00:00Z" {
-		t.Fatalf("expected third row occurred_at=2026-07-03, got %q", rows[2].OccurredAt)
+	if rows[2].OccurredAt != "2026-07-01T00:00:00Z" {
+		t.Fatalf("expected third row occurred_at=2026-07-01, got %q", rows[2].OccurredAt)
 	}
 }
 

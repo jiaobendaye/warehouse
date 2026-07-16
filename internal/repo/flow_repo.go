@@ -63,8 +63,9 @@ func (r *FlowRepo) GetByClientRef(ctx context.Context, clientRef string) (domain
 }
 
 // List returns flows matching the filter, paginated, plus total under the
-// same filter. occurred_at order is ascending so callers can render a
-// chronological timeline. An empty filter returns all flows globally.
+// same filter. occurred_at order is descending (newest first) so callers
+// can render a most-recent-first ledger view. An empty filter returns all
+// flows globally.
 func (r *FlowRepo) List(ctx context.Context, f domain.FlowFilter, limit, offset int) ([]domain.InventoryFlow, int, error) {
 	if limit <= 0 {
 		limit = 50
@@ -94,7 +95,7 @@ func (r *FlowRepo) List(ctx context.Context, f domain.FlowFilter, limit, offset 
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 
-	listSQL := flowSelect + where + " ORDER BY occurred_at ASC, id ASC LIMIT ? OFFSET ?"
+	listSQL := flowSelect + where + " ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?"
 	listArgs := append(append([]any{}, args...), limit, offset)
 	rows, err := r.db.QueryContext(ctx, listSQL, listArgs...)
 	if err != nil {

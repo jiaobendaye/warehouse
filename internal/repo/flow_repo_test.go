@@ -117,11 +117,11 @@ func TestFlowRepo_ListByAccessoryAndType(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	// Verify ascending occurred_at order
+	// Verify descending occurred_at order
 	first, _ := time.Parse(time.RFC3339Nano, rows[0].OccurredAt)
 	second, _ := time.Parse(time.RFC3339Nano, rows[1].OccurredAt)
-	if !first.Before(second) {
-		t.Fatalf("expected ascending order, got %s then %s", rows[0].OccurredAt, rows[1].OccurredAt)
+	if !first.After(second) {
+		t.Fatalf("expected descending order, got %s then %s", rows[0].OccurredAt, rows[1].OccurredAt)
 	}
 }
 
