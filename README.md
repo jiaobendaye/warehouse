@@ -58,12 +58,12 @@ HTTP server started on 0.0.0.0:17881
 | `/mcp`, `/mcp/*` | MCP 端点（SSE + messages） |
 | `/*` | 嵌入式前端（SPA 路由 fallback 到 `index.html`） |
 
-MCP 共 **13 个工具**，按域分组：
+MCP 共 **19 个工具**，按域分组：
 
-- **accessory** (5): 创建 / 查询 (id, sku) / 更新 / 删除 / 列表
-- **stock** (4): 入库 / 出库 / 批量入库 / 批量出库
-- **flow** (2): 列表 / 按配件查询
-- **replenishment** (2): 扫描缺货 / 按 SKU 检查
+- **accessory** (7): 创建 / 查询 (id, name) / 更新 / 删除 / 列表 / 批量导出 / 列出所有档口
+- **stock** (7): 入库 / 出库 / 批量入库 / 批量出库 / 文件出库预览 / 文件出库执行 / 文件入库
+- **flow** (2): 列表 / 按 ID 查询
+- **replenishment** (3): 扫描缺货 / 按名称检查 / 批量导出
 
 ## 构建
 
