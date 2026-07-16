@@ -126,8 +126,8 @@ func (a *App) DeleteAccessory(ctx context.Context, id int64) error {
 	return a.accessory.Delete(ctx, id)
 }
 
-func (a *App) ListAccessories(ctx context.Context, q string, limit, offset int) ([]domain.Accessory, int, error) {
-	return a.accessory.List(ctx, q, limit, offset)
+func (a *App) ListAccessories(ctx context.Context, q, stall string, limit, offset int) ([]domain.Accessory, int, error) {
+	return a.accessory.List(ctx, q, stall, limit, offset)
 }
 
 // ── Stock bindings ───────────────────────────────────────────────

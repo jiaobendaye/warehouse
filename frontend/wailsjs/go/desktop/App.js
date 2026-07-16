@@ -42,8 +42,8 @@ export function IsServerRunning() {
   return window['go']['desktop']['App']['IsServerRunning']();
 }
 
-export function ListAccessories(arg1, arg2, arg3, arg4) {
-  return window['go']['desktop']['App']['ListAccessories'](arg1, arg2, arg3, arg4);
+export function ListAccessories(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['desktop']['App']['ListAccessories'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function ListFlows(arg1, arg2, arg3, arg4, arg5, arg6) {

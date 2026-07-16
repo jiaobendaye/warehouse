@@ -767,6 +767,112 @@ func TestFileForceOutbound_AllSufficient(t *testing.T) {
 	}
 }
 
+func TestFileForceOutbound_AutoCreated_StallApplied(t *testing.T) {
+	svc, acc, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Missing name auto-created with the provided stall. Stock=0, qty=3 →
+	// shortage=3 → threshold bumped to 3 (matching the existing shortage
+	// semantics for forced outbound).
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "薄荷糖支架", Quantity: 3, Stall: "JY"},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Created != 1 {
+		t.Fatalf("expected created=1, got %d", res.Created)
+	}
+	a, err := acc.GetByName(ctx, "薄荷糖支架")
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if a.Stall != "JY" {
+		t.Fatalf("auto-created stall = %q, want JY", a.Stall)
+	}
+
+	// Empty stall falls back to "未分配".
+	res2, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "薄荷糖支架-2", Quantity: 1},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound (no stall): %v", err)
+	}
+	if res2.Created != 1 {
+		t.Fatalf("expected created=1, got %d", res2.Created)
+	}
+	a2, err := acc.GetByName(ctx, "薄荷糖支架-2")
+	if err != nil {
+		t.Fatalf("GetByName: %v", err)
+	}
+	if a2.Stall != "未分配" {
+		t.Fatalf("empty stall fallback = %q, want 未分配", a2.Stall)
+	}
+}
+
+// TestFileForceOutbound_ExistingAccessory_StallOverwritten verifies the
+// batch outbound updates an existing accessory's stall when the file's
+// column header differs from the stored value. The xlsx column is
+// authoritative for batch imports.
+func TestFileForceOutbound_ExistingAccessory_StallOverwritten(t *testing.T) {
+	svc, acc, _, _, cleanup := newStockSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Pre-seed an accessory under stall "优博" with stock=10.
+	existing, err := acc.Create(ctx, domain.Accessory{
+		Name: "薄荷糖支架", LowStockThreshold: 0, Stall: "优博",
+	})
+	if err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+	if err := acc.SetStock(ctx, nil, existing.ID, 10); err != nil {
+		t.Fatalf("seed SetStock: %v", err)
+	}
+
+	// Run a batch outbound that ships the same accessory from column "JY".
+	res, err := svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "薄荷糖支架", Quantity: 2, Stall: "JY"},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound: %v", err)
+	}
+	if res.Created != 0 {
+		t.Errorf("expected created=0 (already existed), got %d", res.Created)
+	}
+	if res.Outbound != 1 {
+		t.Errorf("expected outbound=1, got %d", res.Outbound)
+	}
+
+	// Stall should now match the file, and stock should reflect the outbound.
+	updated, err := acc.Get(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.Stall != "JY" {
+		t.Errorf("existing accessory stall = %q, want JY (overwritten by file)", updated.Stall)
+	}
+	if updated.CurrentStock != 8 {
+		t.Errorf("stock = %d, want 8 (10 - 2)", updated.CurrentStock)
+	}
+
+	// Re-running with the SAME stall should be a no-op for the stall field.
+	_, err = svc.FileForceOutbound(ctx, []service.FileOutboundItem{
+		{Name: "薄荷糖支架", Quantity: 1, Stall: "JY"},
+	})
+	if err != nil {
+		t.Fatalf("FileForceOutbound (same stall): %v", err)
+	}
+	same, err := acc.Get(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if same.Stall != "JY" {
+		t.Errorf("after no-op: stall = %q, want JY", same.Stall)
+	}
+}
+
 func TestFileForceOutbound_MissingName_AutoCreated(t *testing.T) {
 	svc, acc, fr, _, cleanup := newStockSvc(t)
 	defer cleanup()

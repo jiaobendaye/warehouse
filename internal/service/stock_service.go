@@ -579,6 +579,7 @@ func (s *StockService) BatchOutbound(ctx context.Context, items []OutboundCmd) (
 type FileOutboundItem struct {
 	Name     string `json:"name"`
 	Quantity int64  `json:"quantity"`
+	Stall    string `json:"stall"`
 }
 
 // FileForceOutboundResult summarises a force-outbound execution.
@@ -625,7 +626,7 @@ func (s *StockService) FileForceOutbound(ctx context.Context, items []FileOutbou
 	for i, it := range items {
 		a, err := s.acc.GetByName(ctx, it.Name)
 		if errors.Is(err, repo.ErrNotFound) {
-			a, err = s.acc.Create(ctx, domain.Accessory{Name: it.Name, LowStockThreshold: 0})
+			a, err = s.acc.Create(ctx, domain.Accessory{Name: it.Name, LowStockThreshold: 0, Stall: it.Stall})
 			if err != nil {
 				return FileForceOutboundResult{}, fmt.Errorf("row %d create %q: %w", i, it.Name, err)
 			}
@@ -633,6 +634,15 @@ func (s *StockService) FileForceOutbound(ctx context.Context, items []FileOutbou
 			rows[i].created = true
 		} else if err != nil {
 			return FileForceOutboundResult{}, fmt.Errorf("row %d lookup %q: %w", i, it.Name, err)
+		} else if a.Stall != it.Stall {
+			// Existing accessory — sync the file's stall over the stored
+			// one. The xlsx column header is authoritative for batch
+			// imports; an operator should be able to move an accessory
+			// between stalls simply by shipping from a different column.
+			a, err = s.acc.Update(ctx, a.ID, domain.AccessoryUpdate{Stall: &it.Stall})
+			if err != nil {
+				return FileForceOutboundResult{}, fmt.Errorf("row %d update stall %q: %w", i, it.Name, err)
+			}
 		}
 		rows[i].acc = a
 		rows[i].qty = it.Quantity

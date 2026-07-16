@@ -57,6 +57,11 @@ func (s *AccessoryService) Create(ctx context.Context, in domain.Accessory) (dom
 	if err := in.Validate(); err != nil {
 		return domain.Accessory{}, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
 	}
+	// Default stall to "未分配" when the caller (e.g. file-inbound or a
+	// manual create without stall) leaves it blank.
+	if strings.TrimSpace(in.Stall) == "" {
+		in.Stall = "未分配"
+	}
 	// Probe the unique index up-front so we can produce a typed conflict
 	// error instead of leaking the underlying UNIQUE-constraint string.
 	if _, err := s.acc.GetByName(ctx, in.Name); err == nil {
@@ -99,14 +104,20 @@ func (s *AccessoryService) GetByName(ctx context.Context, name string) (domain.A
 }
 
 // List returns accessories matching q (case-insensitive substring on name)
-// with limit/offset pagination, plus the total count under the same filter.
-// q may be empty for an unfiltered list.
-func (s *AccessoryService) List(ctx context.Context, q string, limit, offset int) ([]domain.Accessory, int, error) {
-	rows, total, err := s.acc.List(ctx, q, limit, offset)
+// and the optional stall filter, with limit/offset pagination, plus the
+// total count under the same filters. Either q or stall may be empty.
+func (s *AccessoryService) List(ctx context.Context, q, stall string, limit, offset int) ([]domain.Accessory, int, error) {
+	rows, total, err := s.acc.List(ctx, q, stall, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list accessories: %w", err)
 	}
 	return rows, total, nil
+}
+
+// ListStalls returns the distinct stall values in use, for the frontend
+// autocomplete / filter dropdown.
+func (s *AccessoryService) ListStalls(ctx context.Context) ([]string, error) {
+	return s.acc.ListStalls(ctx)
 }
 
 // Update applies a partial update. Name is mutable. The threshold, when

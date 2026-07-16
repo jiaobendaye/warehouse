@@ -355,6 +355,7 @@ export default function Outbound() {
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>
+                        <th style={thS}>档口</th>
                         <th style={thS}>配件名称</th>
                         <th style={thS}>出库数量</th>
                         <th style={thS}>状态</th>
@@ -363,6 +364,7 @@ export default function Outbound() {
                     <tbody>
                       {(preview.items || []).slice(0, 30).map((it, i) => (
                         <tr key={i} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
+                          <td style={tdS}>{it.stall || '未分配'}</td>
                           <td style={tdS}>{it.name}</td>
                           <td style={tdS}>{it.quantity}</td>
                           <td style={tdS}>
@@ -381,10 +383,11 @@ export default function Outbound() {
                         </tr>
                       ))}
                       {(preview.items || []).length > 30 && (
-                        <tr><td style={tdS} colSpan={3}>… 还有 {(preview.items || []).length - 30} 项</td></tr>
+                        <tr><td style={tdS} colSpan={4}>… 还有 {(preview.items || []).length - 30} 项</td></tr>
                       )}
                       {(preview.not_found || []).map((nf, i) => (
                         <tr key={`nf-${i}`} style={{ background: '#f0f5ff' }}>
+                          <td style={tdS}>{nf.stall || '未分配'}</td>
                           <td style={tdS}>{nf.name}</td>
                           <td style={tdS}>{nf.quantity}</td>
                           <td style={tdS}><span style={{ color: '#1890ff', fontSize: 12 }}>🆕 自动新建</span></td>

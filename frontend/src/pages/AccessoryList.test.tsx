@@ -6,12 +6,13 @@ import AccessoryList from './AccessoryList';
 
 vi.mock('../api/accessory', () => ({
   listAccessories: vi.fn(),
+  listStalls: vi.fn(),
   createAccessory: vi.fn(),
   updateAccessory: vi.fn(),
   deleteAccessory: vi.fn(),
 }));
 
-import { listAccessories } from '../api/accessory';
+import { listAccessories, listStalls } from '../api/accessory';
 
 const mockItems = [
   {
@@ -19,6 +20,7 @@ const mockItems = [
     name: '测试螺丝',
     current_stock: 100,
     low_stock_threshold: 20,
+    stall: '未分配',
     notes: '',
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
@@ -28,6 +30,7 @@ const mockItems = [
     name: '测试螺母',
     current_stock: 50,
     low_stock_threshold: 10,
+    stall: '未分配',
     notes: '易耗品',
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
@@ -42,6 +45,7 @@ describe('AccessoryList', () => {
       limit: 10,
       offset: 0,
     });
+    (listStalls as any).mockResolvedValue({ stalls: [] });
   });
 
   it('renders the page title', async () => {

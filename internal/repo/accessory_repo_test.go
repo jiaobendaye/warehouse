@@ -106,7 +106,7 @@ func TestAccessoryRepo_ListAndSearch(t *testing.T) {
 		}
 	}
 
-	all, total, err := r.List(ctx, "", 100, 0)
+	all, total, err := r.List(ctx, "", "", 100, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestAccessoryRepo_ListAndSearch(t *testing.T) {
 		t.Fatalf("expected 3 items, got %d", len(all))
 	}
 
-	matched, total, err := r.List(ctx, "iPhone", 100, 0)
+	matched, total, err := r.List(ctx, "iPhone", "", 100, 0)
 	if err != nil {
 		t.Fatalf("List filtered: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jiaobendaye/warehouse/internal/domain"
 )
@@ -26,9 +27,9 @@ func NewAccessoryRepo(d *sql.DB) *AccessoryRepo { return &AccessoryRepo{db: d} }
 // schema; a conflict surfaces as the underlying SQLite UNIQUE error.
 func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain.Accessory, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO accessories(name, current_stock, low_stock_threshold, notes)
-		 VALUES (?, 0, ?, ?)`,
-		in.Name, in.LowStockThreshold, in.Notes,
+		`INSERT INTO accessories(name, current_stock, low_stock_threshold, stall, notes)
+		 VALUES (?, 0, ?, COALESCE(NULLIF(?, ''), '未分配'), ?)`,
+		in.Name, in.LowStockThreshold, in.Stall, in.Notes,
 	)
 	if err != nil {
 		return domain.Accessory{}, fmt.Errorf("insert accessory: %w", err)
@@ -43,7 +44,7 @@ func (r *AccessoryRepo) Create(ctx context.Context, in domain.Accessory) (domain
 // Get loads an accessory by primary key.
 func (r *AccessoryRepo) Get(ctx context.Context, id int64) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+		`SELECT id, name, current_stock, low_stock_threshold, stall, notes, created_at, updated_at
 		 FROM accessories WHERE id = ?`, id)
 	return scanAccessory(row)
 }
@@ -51,35 +52,41 @@ func (r *AccessoryRepo) Get(ctx context.Context, id int64) (domain.Accessory, er
 // GetByName loads an accessory by its unique name.
 func (r *AccessoryRepo) GetByName(ctx context.Context, name string) (domain.Accessory, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
+		`SELECT id, name, current_stock, low_stock_threshold, stall, notes, created_at, updated_at
 		 FROM accessories WHERE name = ?`, name)
 	return scanAccessory(row)
 }
 
-// List returns accessories whose NAME contains q (case-insensitive),
-// paginated by limit/offset, plus the total count under the same filter.
-func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) ([]domain.Accessory, int, error) {
+// List returns accessories whose NAME contains q (case-insensitive) and
+// whose STALL equals the optional stall filter, paginated by limit/offset,
+// plus the total count under the same filters.
+func (r *AccessoryRepo) List(ctx context.Context, q, stall string, limit, offset int) ([]domain.Accessory, int, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	var (
 		rows *sql.Rows
 		err  error
+		conds []string
+		args  []any
 	)
-	if q == "" {
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
-			 FROM accessories ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-			limit, offset)
-	} else {
-		like := "%" + q + "%"
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT id, name, current_stock, low_stock_threshold, notes, created_at, updated_at
-			 FROM accessories
-			 WHERE name LIKE ? COLLATE NOCASE
-			 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-			like, limit, offset)
+	if q != "" {
+		conds = append(conds, "name LIKE ? COLLATE NOCASE")
+		args = append(args, "%"+q+"%")
 	}
+	if stall != "" {
+		conds = append(conds, "stall = ?")
+		args = append(args, stall)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	rows, err = r.db.QueryContext(ctx,
+		`SELECT id, name, current_stock, low_stock_threshold, stall, notes, created_at, updated_at
+		 FROM accessories`+where+`
+		 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list query: %w", err)
 	}
@@ -98,20 +105,30 @@ func (r *AccessoryRepo) List(ctx context.Context, q string, limit, offset int) (
 	}
 
 	var total int
-	if q == "" {
-		if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM accessories`).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("count all: %w", err)
-		}
-	} else {
-		like := "%" + q + "%"
-		if err := r.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM accessories
-			 WHERE name LIKE ? COLLATE NOCASE`,
-			like).Scan(&total); err != nil {
-			return nil, 0, fmt.Errorf("count filtered: %w", err)
-		}
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM accessories`+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count: %w", err)
 	}
 	return out, total, nil
+}
+
+// ListStalls returns the distinct stall values in use, sorted alphabetically.
+func (r *AccessoryRepo) ListStalls(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT DISTINCT stall FROM accessories ORDER BY stall COLLATE NOCASE`)
+	if err != nil {
+		return nil, fmt.Errorf("list stalls: %w", err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan stall: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // Update applies the provided partial update. Updated_at is bumped via SQL
@@ -127,15 +144,20 @@ func (r *AccessoryRepo) Update(ctx context.Context, id int64, u domain.Accessory
 	if u.LowStockThreshold != nil {
 		cur.LowStockThreshold = *u.LowStockThreshold
 	}
+	if u.Stall != nil {
+		// Empty string is treated as "reset to default 未分配" — explicit
+		// NULLIF lets the COALESCE pick up the column default.
+		cur.Stall = *u.Stall
+	}
 	if u.Notes != nil {
 		cur.Notes = *u.Notes
 	}
 	if _, err := r.db.ExecContext(ctx,
 		`UPDATE accessories
-		 SET name = ?, low_stock_threshold = ?, notes = ?,
+		 SET name = ?, low_stock_threshold = ?, stall = COALESCE(NULLIF(?, ''), '未分配'), notes = ?,
 		     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		 WHERE id = ?`,
-		cur.Name, cur.LowStockThreshold, cur.Notes, id,
+		cur.Name, cur.LowStockThreshold, cur.Stall, cur.Notes, id,
 	); err != nil {
 		return domain.Accessory{}, fmt.Errorf("update accessory: %w", err)
 	}
@@ -228,7 +250,7 @@ func scanAccessory(s rowScanner) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := s.Scan(
 		&a.ID, &a.Name, &a.CurrentStock,
-		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
+		&a.LowStockThreshold, &a.Stall, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -243,7 +265,7 @@ func scanAccessoryRows(rows *sql.Rows) (domain.Accessory, error) {
 	var a domain.Accessory
 	err := rows.Scan(
 		&a.ID, &a.Name, &a.CurrentStock,
-		&a.LowStockThreshold, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
+		&a.LowStockThreshold, &a.Stall, &a.Notes, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
 		return domain.Accessory{}, fmt.Errorf("scan rows: %w", err)

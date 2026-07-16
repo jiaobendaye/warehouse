@@ -3,6 +3,7 @@ import { apiCall } from './client';
 export interface ReplenishmentItem {
   accessory_id: number;
   name: string;
+  stall: string;
   current_stock: number;
   threshold: number;
   shortage: number;

@@ -3,6 +3,7 @@ import { useToast } from '../components/Toast';
 import { isWails } from '../api/client';
 import {
   listAccessories,
+  listStalls,
   createAccessory,
   updateAccessory,
   deleteAccessory,
@@ -79,6 +80,8 @@ export default function AccessoryList() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [stallFilter, setStallFilter] = useState('');
+  const [stalls, setStalls] = useState<string[]>([]);
   const [offset, setOffset] = useState(0);
   const limit = 10;
   const [refreshKey, setRefreshKey] = useState(0);
@@ -87,6 +90,7 @@ export default function AccessoryList() {
   const [showCreate, setShowCreate] = useState(false);
   const [cName, setCName] = useState('');
   const [cThreshold, setCThreshold] = useState(0);
+  const [cStall, setCStall] = useState('');
   const [cNotes, setCNotes] = useState('');
   const [cErrors, setCErrors] = useState<Record<string, string>>({});
   const [cSubmitting, setCSubmitting] = useState(false);
@@ -95,15 +99,23 @@ export default function AccessoryList() {
   const [editItem, setEditItem] = useState<Accessory | null>(null);
   const [eName, setEName] = useState('');
   const [eThreshold, setEThreshold] = useState(0);
+  const [eStall, setEStall] = useState('');
   const [eNotes, setENotes] = useState('');
   const [eErrors, setEErrors] = useState<Record<string, string>>({});
   const [eSubmitting, setESubmitting] = useState(false);
+
+  // ── fetch stalls for filter + autocomplete ──
+  useEffect(() => {
+    listStalls()
+      .then(res => setStalls(res.stalls || []))
+      .catch(() => {});
+  }, [refreshKey]);
 
   // ── data fetch ──
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    listAccessories(q || undefined, limit, offset)
+    listAccessories(q || undefined, limit, offset, stallFilter || undefined)
       .then(res => {
         if (cancelled) return;
         setItems(res.items);
@@ -117,11 +129,16 @@ export default function AccessoryList() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [q, offset, limit, refreshKey, showToast]);
+  }, [q, stallFilter, offset, limit, refreshKey, showToast]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setQ(searchInput);
+    setOffset(0);
+  };
+
+  const handleStallFilter = (v: string) => {
+    setStallFilter(v);
     setOffset(0);
   };
 
@@ -131,7 +148,7 @@ export default function AccessoryList() {
   // ── create helpers ──
   const resetCreateForm = () => {
     setCName(''); setCThreshold(0);
-    setCNotes(''); setCErrors({});
+    setCStall(''); setCNotes(''); setCErrors({});
   };
 
   const validateCreate = (): boolean => {
@@ -149,6 +166,7 @@ export default function AccessoryList() {
       await createAccessory({
         name: cName.trim(),
         low_stock_threshold: cThreshold,
+        stall: cStall.trim() || undefined,
         notes: cNotes.trim() || undefined,
       });
       showToast('success', '配件创建成功');
@@ -168,6 +186,7 @@ export default function AccessoryList() {
     setEditItem(item);
     setEName(item.name);
     setEThreshold(item.low_stock_threshold);
+    setEStall(item.stall || '');
     setENotes(item.notes || '');
     setEErrors({});
   };
@@ -187,6 +206,7 @@ export default function AccessoryList() {
       await updateAccessory(editItem.id, {
         name: eName.trim(),
         low_stock_threshold: eThreshold,
+        stall: eStall.trim() || undefined,
         notes: eNotes.trim() || undefined,
       });
       showToast('success', '配件更新成功');
@@ -252,6 +272,9 @@ export default function AccessoryList() {
       <Field label="低库存阈值" error={cErrors.threshold}>
         <input style={inp} type="number" min={0} value={cThreshold} onChange={e => setCThreshold(Number(e.target.value))} />
       </Field>
+      <Field label="档口">
+        <input style={inp} list="stall-list" value={cStall} onChange={e => setCStall(e.target.value)} placeholder="未分配" />
+      </Field>
       <Field label="备注">
         <textarea style={{ ...inp, resize: 'vertical' as const, minHeight: 48 }} value={cNotes} onChange={e => setCNotes(e.target.value)} />
       </Field>
@@ -275,6 +298,9 @@ export default function AccessoryList() {
       </Field>
       <Field label="低库存阈值" error={eErrors.threshold}>
         <input style={inp} type="number" min={0} value={eThreshold} onChange={e => setEThreshold(Number(e.target.value))} />
+      </Field>
+      <Field label="档口">
+        <input style={inp} list="stall-list" value={eStall} onChange={e => setEStall(e.target.value)} placeholder="未分配" />
       </Field>
       <Field label="备注">
         <textarea style={{ ...inp, resize: 'vertical', minHeight: 48 }} value={eNotes} onChange={e => setENotes(e.target.value)} />
@@ -302,6 +328,16 @@ export default function AccessoryList() {
             onChange={e => setSearchInput(e.target.value)}
           />
           <button style={btn} type="submit">搜索</button>
+          <select
+            style={{ ...inp, width: 140 }}
+            value={stallFilter}
+            onChange={e => handleStallFilter(e.target.value)}
+          >
+            <option value="">全部档口</option>
+            {stalls.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
         </form>
         <div style={{ display: 'flex', gap: 8 }}>
           <button style={btnGray} disabled={exporting} onClick={handleExport}>
@@ -316,6 +352,7 @@ export default function AccessoryList() {
         <thead>
           <tr>
             <th style={thS}>名称</th>
+            <th style={thS}>档口</th>
             <th style={thS}>当前库存</th>
             <th style={thS}>阈值</th>
             <th style={thS}>操作</th>
@@ -323,14 +360,15 @@ export default function AccessoryList() {
         </thead>
         <tbody>
           {loading && (
-            <tr><td style={tdS} colSpan={4}>加载中…</td></tr>
+            <tr><td style={tdS} colSpan={5}>加载中…</td></tr>
           )}
           {!loading && items.length === 0 && (
-            <tr><td style={tdS} colSpan={4}>暂无数据</td></tr>
+            <tr><td style={tdS} colSpan={5}>暂无数据</td></tr>
           )}
           {!loading && items.map((item, i) => (
             <tr key={item.id} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
               <td style={tdS}>{item.name}</td>
+              <td style={tdS}>{item.stall || '未分配'}</td>
               <td style={tdS}>{item.current_stock}</td>
               <td style={tdS}>{item.low_stock_threshold}</td>
               <td style={tdS}>
@@ -365,6 +403,9 @@ export default function AccessoryList() {
 
       {createModal}
       {editModal}
+      <datalist id="stall-list">
+        {stalls.map(s => <option key={s} value={s} />)}
+      </datalist>
     </div>
   );
 }

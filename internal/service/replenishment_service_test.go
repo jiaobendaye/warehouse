@@ -36,10 +36,17 @@ func newReplSvc(t *testing.T) (*service.ReplenishmentService, *repo.AccessoryRep
 // (since Create always starts stock at 0). It returns the loaded row.
 func seedAccessory(t *testing.T, r *repo.AccessoryRepo, name string, threshold, initialStock int64) domain.Accessory {
 	t.Helper()
+	return seedAccessoryStall(t, r, name, threshold, initialStock, "")
+}
+
+// seedAccessoryStall is the stall-aware variant of seedAccessory.
+func seedAccessoryStall(t *testing.T, r *repo.AccessoryRepo, name string, threshold, initialStock int64, stall string) domain.Accessory {
+	t.Helper()
 	ctx := context.Background()
 	created, err := r.Create(ctx, domain.Accessory{
 		Name:              name,
 		LowStockThreshold: threshold,
+		Stall:             stall,
 	})
 	if err != nil {
 		t.Fatalf("seed Create %s: %v", name, err)
@@ -48,7 +55,6 @@ func seedAccessory(t *testing.T, r *repo.AccessoryRepo, name string, threshold, 
 		if err := r.SetStock(ctx, nil, created.ID, initialStock); err != nil {
 			t.Fatalf("seed SetStock %s: %v", name, err)
 		}
-		// Re-read so callers see the up-to-date row.
 		fresh, err := r.Get(ctx, created.ID)
 		if err != nil {
 			t.Fatalf("seed Get %s: %v", name, err)
@@ -145,7 +151,60 @@ func TestReplenishmentService_Scan_SortsByShortageDesc(t *testing.T) {
 	}
 }
 
-// TestReplenishmentService_Scan_ExcludesThresholdZero verifies accessories
+// TestReplenishmentService_Scan_SortsByStallThenShortage verifies Scan
+// groups by stall ascending and within each stall sorts by shortage desc.
+func TestReplenishmentService_Scan_SortsByStallThenShortage(t *testing.T) {
+	svc, acc, cleanup := newReplSvc(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Two stalls with mixed shortages; one extra in 未分配. Insertion order
+	// is deliberately unsorted to prove the sort is real.
+	_ = seedAccessoryStall(t, acc, "JY-small", 5, 4, "JY")        // shortage=1
+	_ = seedAccessoryStall(t, acc, "优博-big", 100, 1, "优博")   // shortage=99
+	_ = seedAccessoryStall(t, acc, "未分配-med", 50, 10, "")      // shortage=40
+	_ = seedAccessoryStall(t, acc, "JY-big", 100, 1, "JY")        // shortage=99
+	_ = seedAccessoryStall(t, acc, "优博-small", 5, 4, "优博")   // shortage=1
+
+	items, err := svc.Scan(ctx)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(items) != 5 {
+		t.Fatalf("expected 5 items, got %d", len(items))
+	}
+
+	// Stall sort is byte-wise (Go's default string compare). Unicode order
+	// puts "JY" (0x4A) before "优博" (0x4F18) before "未分配" (0x672A).
+	wantOrder := []struct {
+		name  string
+		stall string
+	}{
+		{"JY-big", "JY"},
+		{"JY-small", "JY"},
+		{"优博-big", "优博"},
+		{"优博-small", "优博"},
+		{"未分配-med", "未分配"},
+	}
+	for i, w := range wantOrder {
+		if items[i].Name != w.name {
+			t.Errorf("position %d: got name %q, want %q", i, items[i].Name, w.name)
+		}
+		if items[i].Stall != w.stall {
+			t.Errorf("position %d (%s): stall = %q, want %q", i, items[i].Name, items[i].Stall, w.stall)
+		}
+	}
+
+	// Verify within-stall shortage-desc ordering.
+	// Stall JY: positions 0..1 — big (99) before small (1).
+	if items[0].Shortage <= items[1].Shortage {
+		t.Errorf("JY block not shortage-desc: %d <= %d", items[0].Shortage, items[1].Shortage)
+	}
+	// Stall 优博: positions 2..3 — big (99) before small (1).
+	if items[2].Shortage <= items[3].Shortage {
+		t.Errorf("优博 block not shortage-desc: %d <= %d", items[2].Shortage, items[3].Shortage)
+	}
+}
 // with low_stock_threshold=0 never appear, even when current_stock=0.
 func TestReplenishmentService_Scan_ExcludesThresholdZero(t *testing.T) {
 	svc, acc, cleanup := newReplSvc(t)

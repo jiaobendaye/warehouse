@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -575,32 +576,35 @@ func TestAccessoriesExport_RoundTrip(t *testing.T) {
 		t.Fatalf("rows = %d, want 3 (header + 2); sheet=%+v", len(rows), rows)
 	}
 	// Header sanity.
-	wantHeaders := []string{"名称", "当前库存", "低库存阈值", "备注", "创建时间", "更新时间"}
+	wantHeaders := []string{"档口", "名称", "当前库存", "低库存阈值", "备注", "创建时间", "更新时间"}
 	for i, want := range wantHeaders {
 		if i >= len(rows[0]) || rows[0][i] != want {
 			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
 		}
 	}
 
-	// Find each seeded accessory by name. The repo sorts by created_at
-	// DESC, id DESC, so the most recently created row is index 1 and the
-	// older one is index 2 — but we don't rely on order, we look them up
-	// by name.
+	// Find each seeded accessory by name. The export sorts by stall ASC
+	// then name ASC; both seeded rows have stall=未分配 so the secondary
+	// key sorts 导出-A before 导出-B. Look up by name regardless of position.
 	got := map[string]map[string]string{}
 	for _, row := range rows[1:] {
 		if len(row) == 0 {
 			continue
 		}
-		name := row[0]
+		name := safeCellFromRow(row, 1)
 		got[name] = map[string]string{
-			"stock":     safeCellFromRow(row, 1),
-			"threshold": safeCellFromRow(row, 2),
-			"notes":     safeCellFromRow(row, 3),
+			"stall":     safeCellFromRow(row, 0),
+			"stock":     safeCellFromRow(row, 2),
+			"threshold": safeCellFromRow(row, 3),
+			"notes":     safeCellFromRow(row, 4),
 		}
 	}
 	if g, ok := got["导出-A"]; !ok {
 		t.Errorf("导出-A missing from export")
 	} else {
+		if g["stall"] != "未分配" {
+			t.Errorf("导出-A stall = %q, want 未分配 (default)", g["stall"])
+		}
 		if g["stock"] != "4" {
 			t.Errorf("导出-A stock = %q, want 4", g["stock"])
 		}
@@ -639,8 +643,8 @@ func TestAccessoriesExport_Empty(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1 (header only); got %+v", len(rows), rows)
 	}
-	if len(rows[0]) != 6 {
-		t.Errorf("header column count = %d, want 6; got %+v", len(rows[0]), rows[0])
+	if len(rows[0]) != 7 {
+		t.Errorf("header column count = %d, want 7; got %+v", len(rows[0]), rows[0])
 	}
 }
 
@@ -695,31 +699,33 @@ func TestReplenishmentExport_RoundTrip(t *testing.T) {
 		t.Fatalf("rows = %d, want 3 (header + 2); sheet=%+v", len(rows), rows)
 	}
 
-	wantHeaders := []string{"名称", "当前库存", "阈值", "缺货量", "建议补货"}
+	wantHeaders := []string{"档口", "名称", "当前库存", "阈值", "缺货量", "建议补货"}
 	for i, want := range wantHeaders {
 		if i >= len(rows[0]) || rows[0][i] != want {
 			t.Errorf("header[%d] = %q, want %q", i, safeCell(rows, 0, i), want)
 		}
 	}
 
-	// Sort by shortage DESC — A (shortage=9) must come before B (shortage=2).
-	if rows[1][0] != "导出-A" {
-		t.Errorf("row[1] name = %q, want 导出-A (highest shortage first)", rows[1][0])
+	// Sort by stall ASC then shortage DESC. Both test rows have stall=未分配
+	// (default), so the secondary key decides: A (shortage=4) must come before
+	// B (shortage=3). The stall column lives at index 0; name at index 1.
+	if rows[1][1] != "导出-A" {
+		t.Errorf("row[1] name = %q, want 导出-A (highest shortage first)", rows[1][1])
 	}
-	if rows[1][1] != "1" {
-		t.Errorf("导出-A stock = %q, want 1", rows[1][1])
+	if rows[1][2] != "1" {
+		t.Errorf("导出-A stock = %q, want 1", rows[1][2])
 	}
-	if rows[1][3] != "4" {
-		t.Errorf("导出-A shortage = %q, want 4", rows[1][3])
+	if rows[1][4] != "4" {
+		t.Errorf("导出-A shortage = %q, want 4", rows[1][4])
 	}
-	if rows[2][0] != "导出-B" {
-		t.Errorf("row[2] name = %q, want 导出-B", rows[2][0])
+	if rows[2][1] != "导出-B" {
+		t.Errorf("row[2] name = %q, want 导出-B", rows[2][1])
 	}
-	if rows[2][1] != "2" {
-		t.Errorf("导出-B stock = %q, want 2", rows[2][1])
+	if rows[2][2] != "2" {
+		t.Errorf("导出-B stock = %q, want 2", rows[2][2])
 	}
-	if rows[2][3] != "3" {
-		t.Errorf("导出-B shortage = %q, want 3", rows[2][3])
+	if rows[2][4] != "3" {
+		t.Errorf("导出-B shortage = %q, want 3", rows[2][4])
 	}
 }
 
@@ -744,8 +750,8 @@ func TestReplenishmentExport_Empty(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1 (header only); got %+v", len(rows), rows)
 	}
-	if len(rows[0]) != 5 {
-		t.Errorf("header column count = %d, want 5; got %+v", len(rows[0]), rows[0])
+	if len(rows[0]) != 6 {
+		t.Errorf("header column count = %d, want 6; got %+v", len(rows[0]), rows[0])
 	}
 }
 
@@ -797,4 +803,66 @@ func postMultipartFile(t *testing.T, h http.Handler, path, field, filename strin
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	return resp, raw
+}
+
+// TestAccessories_StallsEndpoint — verifies /api/v1/accessories/stalls
+// returns the distinct stalls in use and that ?stall= filters the list.
+func TestAccessories_StallsEndpoint(t *testing.T) {
+	h := newRouter(t)
+
+	// Seed three accessories with two distinct stalls. Use the PATCH
+	// endpoint to set the stall on the create-without-stall default.
+	post := func(name, stall string) domain.Accessory {
+		t.Helper()
+		resp, raw := httpDo(t, h, http.MethodPost, "/api/v1/accessories",
+			domain.Accessory{Name: name, LowStockThreshold: 5})
+		m := mustOK(t, resp, raw)
+		idF, _ := m["id"].(float64)
+		if stall != "" {
+			stallPtr := stall
+			resp, raw = httpDo(t, h, http.MethodPatch,
+				fmt.Sprintf("/api/v1/accessories/%d", int64(idF)),
+				domain.AccessoryUpdate{Stall: &stallPtr})
+			mustOK(t, resp, raw)
+		}
+		return domain.Accessory{ID: int64(idF), Name: name, Stall: stall}
+	}
+	_ = post("JY-支架-A", "JY")
+	_ = post("JY-支架-B", "JY")
+	_ = post("优博-推拉", "优博")
+	_ = post("无档口-X", "")
+
+	// 1. /accessories/stalls returns the two named stalls plus "未分配".
+	resp, raw := httpDo(t, h, http.MethodGet, "/api/v1/accessories/stalls", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	m := mustOK(t, resp, raw)
+	rawList, _ := m["stalls"].([]any)
+	gotStalls := make([]string, 0, len(rawList))
+	for _, s := range rawList {
+		str, _ := s.(string)
+		gotStalls = append(gotStalls, str)
+	}
+	want := []string{"JY", "优博", "未分配"}
+	if !reflect.DeepEqual(gotStalls, want) {
+		t.Errorf("stalls = %v, want %v", gotStalls, want)
+	}
+
+	// 2. ?stall=JY returns exactly the two JY items.
+	resp, raw = httpDo(t, h, http.MethodGet, "/api/v1/accessories?stall=JY", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, raw)
+	}
+	m = mustOK(t, resp, raw)
+	items, _ := m["items"].([]any)
+	if len(items) != 2 {
+		t.Errorf("filtered items len = %d, want 2", len(items))
+	}
+	for _, raw := range items {
+		obj, _ := raw.(map[string]any)
+		if obj["stall"] != "JY" {
+			t.Errorf("filtered item has stall %v, want JY", obj["stall"])
+		}
+	}
 }

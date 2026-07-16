@@ -5,6 +5,7 @@ export interface Accessory {
   name: string;
   current_stock: number;
   low_stock_threshold: number;
+  stall: string;
   notes: string;
   created_at: string;
   updated_at: string;
@@ -13,12 +14,14 @@ export interface Accessory {
 export interface AccessoryCreate {
   name: string;
   low_stock_threshold: number;
+  stall?: string;
   notes?: string;
 }
 
 export interface AccessoryUpdate {
   name?: string;
   low_stock_threshold?: number;
+  stall?: string;
   notes?: string;
 }
 
@@ -29,12 +32,17 @@ export interface AccessoryListResponse {
   offset: number;
 }
 
-export function listAccessories(q?: string, limit = 50, offset = 0): Promise<AccessoryListResponse> {
+export function listAccessories(q?: string, limit = 50, offset = 0, stall?: string): Promise<AccessoryListResponse> {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
+  if (stall) params.set('stall', stall);
   params.set('limit', String(limit));
   params.set('offset', String(offset));
   return apiCall('GET', `/api/v1/accessories?${params}`);
+}
+
+export function listStalls(): Promise<{ stalls: string[] }> {
+  return apiCall('GET', '/api/v1/accessories/stalls');
 }
 
 export function getAccessory(id: number): Promise<Accessory> {

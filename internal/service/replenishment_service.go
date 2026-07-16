@@ -23,6 +23,7 @@ import (
 type ReplenishmentItem struct {
 	AccessoryID       int64  `json:"accessory_id"`
 	Name              string `json:"name"`
+	Stall             string `json:"stall"`
 	CurrentStock      int64  `json:"current_stock"`
 	Threshold         int64  `json:"threshold"`
 	Shortage          int64  `json:"shortage"`
@@ -72,15 +73,15 @@ func NewReplenishmentService(acc *repo.AccessoryRepo) *ReplenishmentService {
 }
 
 // Scan returns every accessory whose threshold is positive and whose
-// current_stock is strictly less than the threshold, sorted by shortage
-// descending. Threshold-zero accessories are never emitted regardless of
-// stock level — that contract is locked in by
-// TestReplenishmentService_Scan_ExcludesThresholdZero.
+// current_stock is strictly less than the threshold, sorted by stall
+// ascending then shortage descending. Threshold-zero accessories are
+// never emitted regardless of stock level — that contract is locked in
+// by TestReplenishmentService_Scan_ExcludesThresholdZero.
 func (s *ReplenishmentService) Scan(ctx context.Context) ([]ReplenishmentItem, error) {
 	// Pick a limit comfortably above any expected catalog size for v1.
 	// See the type doc for the scaling note.
 	const unlimitedPage = 1_000_000
-	all, _, err := s.acc.List(ctx, "", unlimitedPage, 0)
+	all, _, err := s.acc.List(ctx, "", "", unlimitedPage, 0)
 	if err != nil {
 		return nil, fmt.Errorf("scan: list accessories: %w", err)
 	}
@@ -93,9 +94,7 @@ func (s *ReplenishmentService) Scan(ctx context.Context) ([]ReplenishmentItem, e
 		out = append(out, buildItem(a, a.LowStockThreshold-a.CurrentStock))
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Shortage > out[j].Shortage
-	})
+	sortReplenishment(out)
 
 	return out, nil
 }
@@ -140,11 +139,21 @@ func (s *ReplenishmentService) Check(ctx context.Context, names []string, policy
 	}
 
 	// Sort for stable, predictable output (matches Scan ordering).
-	sort.SliceStable(res.Items, func(i, j int) bool {
-		return res.Items[i].Shortage > res.Items[j].Shortage
-	})
+	sortReplenishment(res.Items)
 
 	return res, nil
+}
+
+// sortReplenishment sorts items by stall ascending then shortage
+// descending, so the export and UI group accessories by stall with the
+// most urgent items first within each stall group.
+func sortReplenishment(items []ReplenishmentItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Stall != items[j].Stall {
+			return items[i].Stall < items[j].Stall
+		}
+		return items[i].Shortage > items[j].Shortage
+	})
 }
 
 // isShortage encodes the threshold-zero rule: only accessories with a
@@ -158,6 +167,7 @@ func buildItem(a domain.Accessory, suggested int64) ReplenishmentItem {
 	return ReplenishmentItem{
 		AccessoryID:       a.ID,
 		Name:              a.Name,
+		Stall:             a.Stall,
 		CurrentStock:      a.CurrentStock,
 		Threshold:         a.LowStockThreshold,
 		Shortage:          a.LowStockThreshold - a.CurrentStock,

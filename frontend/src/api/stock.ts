@@ -66,11 +66,13 @@ export interface FileOutboundPreviewItem {
   quantity: number;
   current_stock: number;
   low_stock_threshold: number;
+  stall: string;
 }
 
 export interface FileOutboundNotFound {
   name: string;
   quantity: number;
+  stall: string;
 }
 
 export interface FileOutboundPreview {

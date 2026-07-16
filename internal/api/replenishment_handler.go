@@ -97,6 +97,7 @@ func (h *ReplenishmentHandler) Export(w http.ResponseWriter, r *http.Request) {
 // order in the exported xlsx. Kept in one place so tests can assert
 // against the same strings the handler writes.
 var replenishmentExportHeaders = []string{
+	"档口",
 	"名称",
 	"当前库存",
 	"阈值",
@@ -105,13 +106,16 @@ var replenishmentExportHeaders = []string{
 }
 
 // buildReplenishmentXLSX writes the scan results to an in-memory xlsx and
-// returns the encoded bytes. Sorts by shortage DESC so the most urgent
-// rows come first, matching the on-screen table.
+// returns the encoded bytes. Sorts by stall ASC then shortage DESC so rows
+// are grouped by stall with the most urgent items first within each group.
 func buildReplenishmentXLSX(items []service.ReplenishmentItem) ([]byte, error) {
 	// Sort a copy so we don't mutate the slice the caller still holds.
 	sorted := make([]service.ReplenishmentItem, len(items))
 	copy(sorted, items)
 	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Stall != sorted[j].Stall {
+			return sorted[i].Stall < sorted[j].Stall
+		}
 		if sorted[i].Shortage != sorted[j].Shortage {
 			return sorted[i].Shortage > sorted[j].Shortage
 		}
@@ -138,6 +142,7 @@ func buildReplenishmentXLSX(items []service.ReplenishmentItem) ([]byte, error) {
 	for i, item := range sorted {
 		row := i + 2
 		values := []any{
+			item.Stall,
 			item.Name,
 			item.CurrentStock,
 			item.Threshold,

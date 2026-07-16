@@ -50,6 +50,7 @@ func NewRouter(s Services, opts RouterOptions) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Accessory CRUD
 		r.Get("/accessories", acc.List)
+		r.Get("/accessories/stalls", acc.Stalls)
 		r.Post("/accessories", acc.Create)
 		r.Get("/accessories/{id}", acc.Get)
 		r.Patch("/accessories/{id}", acc.Update)

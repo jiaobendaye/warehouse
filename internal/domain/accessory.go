@@ -16,6 +16,7 @@ type Accessory struct {
 	Name              string `json:"name"`
 	CurrentStock      int64  `json:"current_stock"`
 	LowStockThreshold int64  `json:"low_stock_threshold"`
+	Stall             string `json:"stall"`
 	Notes             string `json:"notes"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at"`
@@ -25,6 +26,7 @@ type Accessory struct {
 type AccessoryUpdate struct {
 	Name              *string `json:"name,omitempty"`
 	LowStockThreshold *int64  `json:"low_stock_threshold,omitempty"`
+	Stall             *string `json:"stall,omitempty"`
 	Notes             *string `json:"notes,omitempty"`
 }
 

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -33,6 +34,7 @@ type fileOutboundPreviewItem struct {
 	Name         string `json:"name"`
 	Quantity     int64  `json:"quantity"`
 	CurrentStock int64  `json:"current_stock"`
+	Stall        string `json:"stall"`
 }
 
 // fileOutboundNotFoundItem is one unmatched name.
@@ -80,10 +82,11 @@ func registerFileOutboundTools(srv *mcpsdk.Server, stockSvc *service.StockServic
 				})
 				continue
 			}
-			out.Items = append(out.Items, fileOutboundPreviewItem{
-				AccessoryID: acc.ID, Name: acc.Name,
-				Quantity: entry.qty, CurrentStock: acc.CurrentStock,
-			})
+		out.Items = append(out.Items, fileOutboundPreviewItem{
+			AccessoryID: acc.ID, Name: acc.Name,
+			Quantity: entry.qty, CurrentStock: acc.CurrentStock,
+			Stall: entry.stall,
+		})
 		}
 		out.TotalItems = len(agg)
 		out.MatchedCount = len(out.Items)
@@ -102,7 +105,7 @@ func registerFileOutboundTools(srv *mcpsdk.Server, stockSvc *service.StockServic
 
 		items := make([]service.FileOutboundItem, 0, len(agg))
 		for _, entry := range agg {
-			items = append(items, service.FileOutboundItem{Name: entry.name, Quantity: entry.qty})
+			items = append(items, service.FileOutboundItem{Name: entry.name, Quantity: entry.qty, Stall: entry.stall})
 		}
 
 		res, err := stockSvc.FileForceOutbound(ctx, items)
@@ -119,12 +122,14 @@ func registerFileOutboundTools(srv *mcpsdk.Server, stockSvc *service.StockServic
 }
 
 type aggEntry struct {
-	name string
-	qty  int64
+	name  string
+	qty   int64
+	stall string
 }
 
 // parseXlsxFile reads an xlsx from disk and aggregates name→qty from the
-// "汇总" sheet.
+// "汇总" sheet. Row 0 is the stall-name header; each column's entries
+// belong to that column's stall.
 func parseXlsxFile(path string) ([]aggEntry, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -144,9 +149,10 @@ func parseXlsxFile(path string) ([]aggEntry, error) {
 		return nil, fmt.Errorf("汇总 sheet has no data rows")
 	}
 
+	header := rows[0]
 	aggMap := make(map[string]*aggEntry)
 	for rowIdx := 1; rowIdx < len(rows); rowIdx++ {
-		for _, cell := range rows[rowIdx] {
+		for colIdx, cell := range rows[rowIdx] {
 			if cell == "" {
 				continue
 			}
@@ -159,10 +165,14 @@ func parseXlsxFile(path string) ([]aggEntry, error) {
 			if _, err := fmt.Sscanf(m[2], "%d", &qty); err != nil {
 				continue
 			}
+			stall := "未分配"
+			if colIdx < len(header) && strings.TrimSpace(header[colIdx]) != "" {
+				stall = strings.TrimSpace(header[colIdx])
+			}
 			if existing, ok := aggMap[name]; ok {
 				existing.qty += qty
 			} else {
-				aggMap[name] = &aggEntry{name: name, qty: qty}
+				aggMap[name] = &aggEntry{name: name, qty: qty, stall: stall}
 			}
 		}
 	}

@@ -147,6 +147,7 @@ export default function Replenishment() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
+                  <th style={thS}>档口</th>
                   <th style={thS}>名称</th>
                   <th style={thS}>当前库存</th>
                   <th style={thS}>阈值</th>
@@ -156,9 +157,13 @@ export default function Replenishment() {
               </thead>
               <tbody>
                 {[...scanResult]
-                  .sort((a, b) => b.shortage - a.shortage)
+                  .sort((a, b) => {
+                    if (a.stall !== b.stall) return a.stall < b.stall ? -1 : 1;
+                    return b.shortage - a.shortage;
+                  })
                   .map((item, idx) => (
                     <tr key={item.accessory_id} style={rowStyle(item, idx)}>
+                      <td style={tdS}>{item.stall || '未分配'}</td>
                       <td style={tdS}>{item.name}</td>
                       <td style={tdS}>{item.current_stock}</td>
                       <td style={tdS}>{item.threshold}</td>
@@ -240,6 +245,7 @@ export default function Replenishment() {
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
+                    <th style={thS}>档口</th>
                     <th style={thS}>名称</th>
                     <th style={thS}>当前库存</th>
                     <th style={thS}>阈值</th>
@@ -249,9 +255,13 @@ export default function Replenishment() {
                 </thead>
                 <tbody>
                   {checkResult.items
-                    .sort((a, b) => b.shortage - a.shortage)
+                    .sort((a, b) => {
+                      if (a.stall !== b.stall) return a.stall < b.stall ? -1 : 1;
+                      return b.shortage - a.shortage;
+                    })
                     .map((item, idx) => (
                       <tr key={item.accessory_id} style={rowStyle(item, idx)}>
+                        <td style={tdS}>{item.stall || '未分配'}</td>
                         <td style={tdS}>{item.name}</td>
                         <td style={tdS}>{item.current_stock}</td>
                         <td style={tdS}>{item.threshold}</td>

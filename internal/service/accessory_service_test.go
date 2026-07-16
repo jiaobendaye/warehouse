@@ -170,7 +170,7 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	}
 
 	// No filter -> all 4
-	all, total, err := svc.List(ctx, "", 100, 0)
+	all, total, err := svc.List(ctx, "", "", 100, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	}
 
 	// Keyword 'iPhone' -> 3 (matches name)
-	matched, total, err := svc.List(ctx, "iPhone", 100, 0)
+	matched, total, err := svc.List(ctx, "iPhone", "", 100, 0)
 	if err != nil {
 		t.Fatalf("List filtered: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	}
 
 	// Pagination: limit=2, offset=0
-	page1, total, err := svc.List(ctx, "", 2, 0)
+	page1, total, err := svc.List(ctx, "", "", 2, 0)
 	if err != nil {
 		t.Fatalf("List page1: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	}
 
 	// Pagination: limit=2, offset=2
-	page2, _, err := svc.List(ctx, "", 2, 2)
+	page2, _, err := svc.List(ctx, "", "", 2, 2)
 	if err != nil {
 		t.Fatalf("List page2: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestAccessoryService_List_KeywordAndPagination(t *testing.T) {
 	}
 
 	// Case-insensitive name match
-	byName, total, err := svc.List(ctx, "数据线", 100, 0)
+	byName, total, err := svc.List(ctx, "数据线", "", 100, 0)
 	if err != nil {
 		t.Fatalf("List by name: %v", err)
 	}

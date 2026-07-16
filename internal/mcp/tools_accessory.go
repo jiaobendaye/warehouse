@@ -115,7 +115,7 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService, e
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
 		Name: "accessory.list", Description: "List accessories (supports keyword q, paginated).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryListInput) (*mcpsdk.CallToolResult, accessoryListOutput, error) {
-		rows, total, err := svc.List(ctx, in.Q, in.Limit, in.Offset)
+		rows, total, err := svc.List(ctx, in.Q, "", in.Limit, in.Offset)
 		if err != nil {
 			return nil, accessoryListOutput{}, rpcError(err)
 		}
@@ -196,7 +196,7 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService, e
 		// HTTP handler uses to signal "give me everything" without
 		// adding a new service method.
 		const unlimitedPage = 1_000_000
-		rows, _, err := svc.List(ctx, "", unlimitedPage, 0)
+		rows, _, err := svc.List(ctx, "", "", unlimitedPage, 0)
 		if err != nil {
 			return nil, accessoryExportOutput{}, rpcError(err)
 		}

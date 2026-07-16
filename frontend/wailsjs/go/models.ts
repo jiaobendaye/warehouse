@@ -28,6 +28,7 @@ export namespace domain {
 	    name: string;
 	    current_stock: number;
 	    low_stock_threshold: number;
+	    stall: string;
 	    notes: string;
 	    created_at: string;
 	    updated_at: string;
@@ -42,6 +43,7 @@ export namespace domain {
 	        this.name = source["name"];
 	        this.current_stock = source["current_stock"];
 	        this.low_stock_threshold = source["low_stock_threshold"];
+	        this.stall = source["stall"];
 	        this.notes = source["notes"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
@@ -50,6 +52,7 @@ export namespace domain {
 	export class AccessoryUpdate {
 	    name?: string;
 	    low_stock_threshold?: number;
+	    stall?: string;
 	    notes?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -60,6 +63,7 @@ export namespace domain {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.low_stock_threshold = source["low_stock_threshold"];
+	        this.stall = source["stall"];
 	        this.notes = source["notes"];
 	    }
 	}
@@ -103,6 +107,7 @@ export namespace service {
 	export class ReplenishmentItem {
 	    accessory_id: number;
 	    name: string;
+	    stall: string;
 	    current_stock: number;
 	    threshold: number;
 	    shortage: number;
@@ -116,6 +121,7 @@ export namespace service {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.accessory_id = source["accessory_id"];
 	        this.name = source["name"];
+	        this.stall = source["stall"];
 	        this.current_stock = source["current_stock"];
 	        this.threshold = source["threshold"];
 	        this.shortage = source["shortage"];

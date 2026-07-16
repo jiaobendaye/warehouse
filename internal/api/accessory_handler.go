@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -25,12 +26,13 @@ func NewAccessoryHandler(svc *service.AccessoryService) *AccessoryHandler {
 	return &AccessoryHandler{svc: svc}
 }
 
-// List — GET /api/v1/accessories?q=&limit=&offset=
+// List — GET /api/v1/accessories?q=&stall=&limit=&offset=
 func (h *AccessoryHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	stall := r.URL.Query().Get("stall")
 	limit := parseIntQuery(r, "limit", 0)
 	offset := parseIntQuery(r, "offset", 0)
-	rows, total, err := h.svc.List(r.Context(), q, limit, offset)
+	rows, total, err := h.svc.List(r.Context(), q, stall, limit, offset)
 	if err != nil {
 		status, code := TranslateError(err)
 		WriteError(w, status, code, err.Error())
@@ -42,6 +44,19 @@ func (h *AccessoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	})
+}
+
+// Stalls — GET /api/v1/accessories/stalls
+// Returns the distinct stall values in use, for the frontend filter
+// dropdown and create/edit autocomplete.
+func (h *AccessoryHandler) Stalls(w http.ResponseWriter, r *http.Request) {
+	stalls, err := h.svc.ListStalls(r.Context())
+	if err != nil {
+		status, code := TranslateError(err)
+		WriteError(w, status, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stalls": stalls})
 }
 
 // Create — POST /api/v1/accessories  body: Accessory (without ID/CreatedAt/UpdatedAt)
@@ -185,7 +200,7 @@ func (h *AccessoryHandler) Export(w http.ResponseWriter, r *http.Request) {
 	// bound; we ask for a million which is well above any realistic
 	// accessory count and signals "give me everything" without a new
 	// service method.
-	rows, _, err := h.svc.List(r.Context(), "", 1_000_000, 0)
+	rows, _, err := h.svc.List(r.Context(), "", "", 1_000_000, 0)
 	if err != nil {
 		status, code := TranslateError(err)
 		WriteError(w, status, code, err.Error())
@@ -210,6 +225,7 @@ func (h *AccessoryHandler) Export(w http.ResponseWriter, r *http.Request) {
 // order in the exported xlsx. Kept in one place so the test can assert
 // against the same strings the handler writes.
 var accessoriesExportHeaders = []string{
+	"档口",
 	"名称",
 	"当前库存",
 	"低库存阈值",
@@ -243,11 +259,20 @@ func buildAccessoriesXLSX(rows []domain.Accessory) ([]byte, error) {
 			return nil, fmt.Errorf("set header %s: %w", cell, err)
 		}
 	}
+	// Sort by stall ascending then name ascending for stable, grouped output.
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Stall != rows[j].Stall {
+			return rows[i].Stall < rows[j].Stall
+		}
+		return rows[i].Name < rows[j].Name
+	})
+
 	// Data rows. excelize coords are 1-indexed; row 1 is the header, so
 	// the first data row is row 2.
 	for i, a := range rows {
 		row := i + 2
 		values := []any{
+			a.Stall,
 			a.Name,
 			a.CurrentStock,
 			a.LowStockThreshold,

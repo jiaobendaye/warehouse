@@ -25,17 +25,19 @@ func NewFileOutboundHandler(stockSvc *service.StockService, accSvc *service.Acce
 
 // FileOutboundPreviewItem is one matched row in the preview response.
 type FileOutboundPreviewItem struct {
-	AccessoryID      int64  `json:"accessory_id"`
-	Name             string `json:"name"`
-	Quantity         int64  `json:"quantity"`
-	CurrentStock     int64  `json:"current_stock"`
-	LowStockThreshold int64 `json:"low_stock_threshold"`
+	AccessoryID       int64  `json:"accessory_id"`
+	Name              string `json:"name"`
+	Quantity          int64  `json:"quantity"`
+	CurrentStock      int64  `json:"current_stock"`
+	LowStockThreshold int64  `json:"low_stock_threshold"`
+	Stall             string `json:"stall"`
 }
 
 // FileOutboundNotFound is one unmatched name from the xlsx.
 type FileOutboundNotFound struct {
 	Name     string `json:"name"`
 	Quantity int64  `json:"quantity"`
+	Stall    string `json:"stall"`
 }
 
 // FileOutboundPreview is the response for POST /api/v1/stock/file_outbound.
@@ -73,6 +75,7 @@ func (h *FileOutboundHandler) Preview(w http.ResponseWriter, r *http.Request) {
 			preview.NotFound = append(preview.NotFound, FileOutboundNotFound{
 				Name:     entry.name,
 				Quantity: entry.qty,
+				Stall:    entry.stall,
 			})
 			continue
 		}
@@ -82,6 +85,7 @@ func (h *FileOutboundHandler) Preview(w http.ResponseWriter, r *http.Request) {
 			Quantity:          entry.qty,
 			CurrentStock:      acc.CurrentStock,
 			LowStockThreshold: acc.LowStockThreshold,
+			Stall:             entry.stall,
 		})
 	}
 
@@ -106,7 +110,7 @@ func (h *FileOutboundHandler) Execute(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]service.FileOutboundItem, 0, len(agg))
 	for _, entry := range agg {
-		items = append(items, service.FileOutboundItem{Name: entry.name, Quantity: entry.qty})
+		items = append(items, service.FileOutboundItem{Name: entry.name, Quantity: entry.qty, Stall: entry.stall})
 	}
 
 	res, err := h.stockSvc.FileForceOutbound(r.Context(), items)
@@ -154,12 +158,17 @@ func readUploadedXlsxBytes(r *http.Request) ([]byte, error) {
 }
 
 type aggEntry struct {
-	name string
-	qty  int64
+	name  string
+	qty   int64
+	stall string
 }
 
 // parseXlsxSummary reads the uploaded xlsx and returns aggregated name→qty
-// from the "汇总" sheet. Callers should already have set MaxBytesReader.
+// from the "汇总" sheet. Row 0 is the header: each column's header cell
+// is the stall (档口) name, and the cells below it are "名称 x数量" entries
+// belonging to that stall. Same-name entries across columns are aggregated
+// (qty summed); the stall is taken from the first column the name appears
+// in. Callers should already have set MaxBytesReader.
 func parseXlsxSummary(r *http.Request) ([]aggEntry, error) {
 	raw, err := readUploadedXlsxBytes(r)
 	if err != nil {
@@ -180,9 +189,15 @@ func parseXlsxSummary(r *http.Request) ([]aggEntry, error) {
 		return nil, fmt.Errorf("汇总 sheet has no data rows (need header + at least 1 data row)")
 	}
 
+	// Row 0 = stall names (one per column).
+	header := rows[0]
+	if len(header) == 0 {
+		return nil, fmt.Errorf("汇总 sheet header row is empty")
+	}
+
 	aggMap := make(map[string]*aggEntry)
 	for rowIdx := 1; rowIdx < len(rows); rowIdx++ {
-		for _, cell := range rows[rowIdx] {
+		for colIdx, cell := range rows[rowIdx] {
 			if cell == "" {
 				continue
 			}
@@ -195,10 +210,17 @@ func parseXlsxSummary(r *http.Request) ([]aggEntry, error) {
 			if _, err := fmt.Sscanf(m[2], "%d", &qty); err != nil {
 				continue
 			}
+			// Stall from this column's header; default to "未分配" if
+			// the header cell is blank or the column index exceeds the
+			// header length.
+			stall := "未分配"
+			if colIdx < len(header) && strings.TrimSpace(header[colIdx]) != "" {
+				stall = strings.TrimSpace(header[colIdx])
+			}
 			if existing, ok := aggMap[name]; ok {
 				existing.qty += qty
 			} else {
-				aggMap[name] = &aggEntry{name: name, qty: qty}
+				aggMap[name] = &aggEntry{name: name, qty: qty, stall: stall}
 			}
 		}
 	}
