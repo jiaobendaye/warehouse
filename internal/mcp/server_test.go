@@ -55,7 +55,7 @@ func newTestServices(t *testing.T) mcp.Services {
 	accRepo := repo.NewAccessoryRepo(d)
 	flowRepo := repo.NewFlowRepo(d)
 	return mcp.Services{
-		Accessory:     service.NewAccessoryService(accRepo, flowRepo),
+		Accessory:     service.NewAccessoryService(d, accRepo, flowRepo),
 		Stock:         service.NewStockService(accRepo, flowRepo, d),
 		Flow:          service.NewFlowService(flowRepo),
 		Replenishment: service.NewReplenishmentService(accRepo),
@@ -92,13 +92,6 @@ func TestTranslateError_InvalidInput_MapsTo_32600(t *testing.T) {
 
 func TestTranslateError_NameConflict_MapsTo_32005(t *testing.T) {
 	code, _ := mcp.TranslateError(service.ErrNameConflict)
-	if code != -32005 {
-		t.Fatalf("want code -32005, got %d", code)
-	}
-}
-
-func TestTranslateError_HasFlow_MapsTo_32005(t *testing.T) {
-	code, _ := mcp.TranslateError(service.ErrHasFlow)
 	if code != -32005 {
 		t.Fatalf("want code -32005, got %d", code)
 	}

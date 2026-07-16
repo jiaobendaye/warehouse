@@ -182,6 +182,24 @@ func (r *AccessoryRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DeleteTx is the transactional twin of Delete. Used when the caller has
+// already opened a tx (e.g. cascade-deleting flows before the accessory).
+// Behavior mirrors Delete: returns ErrNotFound when no row matched.
+func (r *AccessoryRepo) DeleteTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	res, err := tx.ExecContext(ctx, `DELETE FROM accessories WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete accessory (tx): %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AdjustStock atomically applies delta to current_stock. Negative deltas
 // (outbound) are rejected by the caller; this method is the safe primitive.
 func (r *AccessoryRepo) AdjustStock(ctx context.Context, tx *sql.Tx, id, delta int64) error {

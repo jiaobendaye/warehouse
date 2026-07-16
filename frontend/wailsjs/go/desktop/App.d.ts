@@ -13,7 +13,7 @@ export function CheckReplenishment(arg1:context.Context,arg2:Array<string>,arg3:
 
 export function CreateAccessory(arg1:context.Context,arg2:domain.Accessory):Promise<domain.Accessory>;
 
-export function DeleteAccessory(arg1:context.Context,arg2:number):Promise<void>;
+export function DeleteAccessory(arg1:context.Context,arg2:number):Promise<number>;
 
 export function GetAccessory(arg1:context.Context,arg2:number):Promise<domain.Accessory>;
 

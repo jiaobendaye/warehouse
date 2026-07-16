@@ -82,9 +82,12 @@ type accessoryDeleteInput struct {
 	ID int64 `json:"id" jsonschema:"accessory id"`
 }
 
-// accessoryDeleteOutput is the small success envelope for delete.
+// accessoryDeleteOutput is the success envelope for delete. FlowsDeleted
+// reports how many inventory_flow rows were removed alongside the accessory
+// (0 when the accessory had no flows).
 type accessoryDeleteOutput struct {
-	Deleted int64 `json:"deleted"`
+	Deleted      int64 `json:"deleted"`
+	FlowsDeleted int64 `json:"flows_deleted"`
 }
 
 // accessoryExportInput is empty; the tool always exports the whole
@@ -197,12 +200,23 @@ func registerAccessoryTools(srv *mcpsdk.Server, svc *service.AccessoryService, e
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{
-		Name: "accessory.delete", Description: "Delete an accessory. Fails with CONFLICT if any inventory flow references it.",
+		Name:        "accessory.delete",
+		Description: "Delete an accessory AND all its inventory flows in one transaction. Returns the deleted accessory id and the count of flows removed.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in accessoryDeleteInput) (*mcpsdk.CallToolResult, accessoryDeleteOutput, error) {
-		if err := svc.Delete(ctx, in.ID); err != nil {
+		flowN, err := svc.Delete(ctx, in.ID)
+		if err != nil {
 			return nil, accessoryDeleteOutput{}, rpcError(err)
 		}
-		return nil, accessoryDeleteOutput{Deleted: in.ID}, nil
+		text := fmt.Sprintf("Deleted accessory %d and %d flow(s).", in.ID, flowN)
+		return &mcpsdk.CallToolResult{
+			Content: []mcpsdk.Content{
+				&mcpsdk.TextContent{Text: text},
+			},
+			StructuredContent: map[string]any{
+				"deleted":       in.ID,
+				"flows_deleted": flowN,
+			},
+		}, accessoryDeleteOutput{Deleted: in.ID, FlowsDeleted: flowN}, nil
 	})
 
 	mcpsdk.AddTool(srv, &mcpsdk.Tool{

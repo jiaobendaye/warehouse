@@ -134,6 +134,29 @@ func (r *FlowRepo) CountByAccessory(ctx context.Context, accessoryID int64) (int
 	return n, nil
 }
 
+// DeleteByAccessory removes every flow row whose accessory_id matches.
+// When tx is non-nil the delete participates in that transaction; otherwise
+// it runs directly against the database. Returns the number of rows removed.
+func (r *FlowRepo) DeleteByAccessory(ctx context.Context, tx *sql.Tx, accessoryID int64) (int64, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	if tx != nil {
+		res, err = tx.ExecContext(ctx, `DELETE FROM inventory_flow WHERE accessory_id = ?`, accessoryID)
+	} else {
+		res, err = r.db.ExecContext(ctx, `DELETE FROM inventory_flow WHERE accessory_id = ?`, accessoryID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("delete flows by accessory: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return n, nil
+}
+
 const flowSelect = `SELECT id, accessory_id, type, quantity, unit_cost, unit_price,
 	balance_after, COALESCE(client_ref, ''), remark, occurred_at, created_at
 	FROM inventory_flow`

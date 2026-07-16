@@ -112,17 +112,25 @@ func (h *AccessoryHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete — DELETE /api/v1/accessories/{id}
+//
+// Cascades: also removes every inventory_flow row referencing the accessory.
+// Returns {"deleted": id, "flows_deleted": N} so callers know how many flow
+// rows were removed alongside the accessory.
 func (h *AccessoryHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseIDParam(w, r)
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	flowN, err := h.svc.Delete(r.Context(), id)
+	if err != nil {
 		status, code := TranslateError(err)
 		WriteError(w, status, code, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted":       id,
+		"flows_deleted": flowN,
+	})
 }
 
 // --- shared helpers ------------------------------------------------------

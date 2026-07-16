@@ -36,7 +36,7 @@ func newRouter(t *testing.T) http.Handler {
 
 	accRepo := repo.NewAccessoryRepo(d)
 	flowRepo := repo.NewFlowRepo(d)
-	accSvc := service.NewAccessoryService(accRepo, flowRepo)
+	accSvc := service.NewAccessoryService(d, accRepo, flowRepo)
 	stockSvc := service.NewStockService(accRepo, flowRepo, d)
 	flowSvc := service.NewFlowService(flowRepo)
 	replSvc := service.NewReplenishmentService(accRepo)
@@ -201,8 +201,9 @@ func TestAccessories_DuplicateName_409(t *testing.T) {
 	mustError(t, resp, raw, http.StatusConflict, "CONFLICT")
 }
 
-// TestAccessories_DeleteWithFlows_409 — create + inbound + delete returns 409 CONFLICT.
-func TestAccessories_DeleteWithFlows_409(t *testing.T) {
+// TestAccessories_DeleteCascadesFlows — create + inbound + delete returns 200
+// with flows_deleted=1 in the body; the accessory and the flow are both gone.
+func TestAccessories_DeleteCascadesFlows(t *testing.T) {
 	h := newRouter(t)
 	acc := newAccessory(t, h, "HAF")
 
@@ -213,7 +214,24 @@ func TestAccessories_DeleteWithFlows_409(t *testing.T) {
 	}
 
 	resp, raw := httpDo(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/accessories/%d", acc.ID), nil)
-	mustError(t, resp, raw, http.StatusConflict, "CONFLICT")
+	m := mustOK(t, resp, raw)
+	if int(m["deleted"].(float64)) != int(acc.ID) {
+		t.Fatalf("deleted = %v, want %d", m["deleted"], acc.ID)
+	}
+	if int(m["flows_deleted"].(float64)) != 1 {
+		t.Fatalf("flows_deleted = %v, want 1", m["flows_deleted"])
+	}
+
+	// Accessory gone.
+	resp, raw = httpDo(t, h, http.MethodGet, fmt.Sprintf("/api/v1/accessories/%d", acc.ID), nil)
+	mustError(t, resp, raw, http.StatusNotFound, "NOT_FOUND")
+
+	// Flow ledger for that accessory is empty.
+	resp, raw = httpDo(t, h, http.MethodGet, fmt.Sprintf("/api/v1/flows?accessory_id=%d", acc.ID), nil)
+	m = mustOK(t, resp, raw)
+	if int(m["total"].(float64)) != 0 {
+		t.Fatalf("flows total = %v, want 0", m["total"])
+	}
 }
 
 // TestStock_Inbound_UpdatesAndReturnsFlow — POST inbound, verify response + flow list contains it.

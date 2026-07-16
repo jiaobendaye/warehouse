@@ -47,7 +47,7 @@ func newRouterWithExports(t *testing.T) (http.Handler, string) {
 	accRepo := repo.NewAccessoryRepo(d)
 	flowRepo := repo.NewFlowRepo(d)
 	svcs := api.Services{
-		Accessory:     service.NewAccessoryService(accRepo, flowRepo),
+		Accessory:     service.NewAccessoryService(d, accRepo, flowRepo),
 		Stock:         service.NewStockService(accRepo, flowRepo, d),
 		Flow:          service.NewFlowService(flowRepo),
 		Replenishment: service.NewReplenishmentService(accRepo),
@@ -139,7 +139,7 @@ func TestExportsEndpoint_RelativeExportsDir(t *testing.T) {
 	accRepo := repo.NewAccessoryRepo(d)
 	flowRepo := repo.NewFlowRepo(d)
 	svcs := api.Services{
-		Accessory:     service.NewAccessoryService(accRepo, flowRepo),
+		Accessory:     service.NewAccessoryService(d, accRepo, flowRepo),
 		Stock:         service.NewStockService(accRepo, flowRepo, d),
 		Flow:          service.NewFlowService(flowRepo),
 		Replenishment: service.NewReplenishmentService(accRepo),

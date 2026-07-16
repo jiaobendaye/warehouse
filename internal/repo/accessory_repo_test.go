@@ -3,6 +3,7 @@ package repo_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -180,3 +181,48 @@ func TestAccessoryRepo_Delete(t *testing.T) {
 
 func ptr(s string) *string        { return &s }
 func ptrInt64(n int64) *int64     { return &n }
+
+// TestAccessoryRepo_DeleteTx_RemovesRow verifies DeleteTx removes the row
+// when called inside a real transaction.
+func TestAccessoryRepo_DeleteTx_RemovesRow(t *testing.T) {
+	d, cleanup := newTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	r := repo.NewAccessoryRepo(d)
+	created, err := r.Create(ctx, domain.Accessory{Name: "del-me-tx"})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if err := r.DeleteTx(ctx, tx, created.ID); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("DeleteTx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if _, err := r.Get(ctx, created.ID); !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after DeleteTx, got %v", err)
+	}
+}
+
+// TestAccessoryRepo_DeleteTx_NotFound verifies DeleteTx returns ErrNotFound
+// when the row does not exist (mirrors the non-tx Delete's contract).
+func TestAccessoryRepo_DeleteTx_NotFound(t *testing.T) {
+	d, cleanup := newTestDB(t)
+	defer cleanup()
+	r := repo.NewAccessoryRepo(d)
+	tx, err := d.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+	if err := r.DeleteTx(context.Background(), tx, 99999); !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}

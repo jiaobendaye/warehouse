@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jiaobendaye/warehouse/internal/db"
@@ -29,7 +29,7 @@ func newSvc(t *testing.T) (*service.AccessoryService, *repo.AccessoryRepo, *repo
 	d, cleanup := newTestDB(t)
 	acc := repo.NewAccessoryRepo(d)
 	flow := repo.NewFlowRepo(d)
-	return service.NewAccessoryService(acc, flow), acc, flow, cleanup
+	return service.NewAccessoryService(d, acc, flow), acc, flow, cleanup
 }
 
 func strPtr(s string) *string { return &s }
@@ -309,7 +309,7 @@ func TestAccessoryService_Update_NotFound(t *testing.T) {
 
 // --- Delete --------------------------------------------------------------
 
-func TestAccessoryService_Delete_NoFlows_OK(t *testing.T) {
+func TestAccessoryService_Delete_NoFlows_ReturnsZero(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -317,16 +317,23 @@ func TestAccessoryService_Delete_NoFlows_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if err := svc.Delete(ctx, created.ID); err != nil {
+	flowN, err := svc.Delete(ctx, created.ID)
+	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	// verify gone
+	if flowN != 0 {
+		t.Fatalf("expected flows_deleted=0, got %d", flowN)
+	}
+	// verify accessory gone
 	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, service.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete, got %v", err)
 	}
 }
 
-func TestAccessoryService_Delete_WithFlows_Rejected(t *testing.T) {
+// TestAccessoryService_Delete_WithFlows_DeletesBoth verifies the cascade:
+// both the accessory and every flow row go away, and the count returned
+// matches the number of flows that were attached.
+func TestAccessoryService_Delete_WithFlows_DeletesBoth(t *testing.T) {
 	svc, _, fr, cleanup := newSvc(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -334,31 +341,47 @@ func TestAccessoryService_Delete_WithFlows_Rejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// Attach a flow row directly via FlowRepo (StockService will own this later).
-	if _, err := fr.Insert(ctx, nil, domain.InventoryFlow{
-		AccessoryID:  created.ID,
-		Type:         domain.FlowTypeIn,
-		Quantity:     1,
-		BalanceAfter: 1,
-		OccurredAt:   "2026-07-01T00:00:00Z",
-	}); err != nil {
-		t.Fatalf("seed flow: %v", err)
+	// Attach three flow rows directly via FlowRepo.
+	for i, qt := range []int64{1, 2, 3} {
+		if _, err := fr.Insert(ctx, nil, domain.InventoryFlow{
+			AccessoryID:  created.ID,
+			Type:         domain.FlowTypeIn,
+			Quantity:     qt,
+			BalanceAfter: qt,
+			OccurredAt:   "2026-07-01T00:00:00Z",
+			Remark:       fmt.Sprintf("seed-%d", i),
+		}); err != nil {
+			t.Fatalf("seed flow %d: %v", i, err)
+		}
 	}
-	err = svc.Delete(ctx, created.ID)
-	if !errors.Is(err, service.ErrHasFlow) {
-		t.Fatalf("expected ErrHasFlow, got %v", err)
+
+	flowN, err := svc.Delete(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
-	// message should mention the protection
-	if err != nil && !strings.Contains(err.Error(), "流水") && !strings.Contains(err.Error(), "flow") {
-		t.Fatalf("error message should mention flow/流水, got %q", err.Error())
+	if flowN != 3 {
+		t.Fatalf("expected flows_deleted=3, got %d", flowN)
+	}
+	// verify accessory gone
+	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, service.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+	// verify flow table clean
+	if n, err := fr.CountByAccessory(ctx, created.ID); err != nil {
+		t.Fatalf("CountByAccessory: %v", err)
+	} else if n != 0 {
+		t.Fatalf("expected 0 flows remaining, got %d", n)
 	}
 }
 
 func TestAccessoryService_Delete_NotFound(t *testing.T) {
 	svc, _, _, cleanup := newSvc(t)
 	defer cleanup()
-	err := svc.Delete(context.Background(), 7777)
+	flowN, err := svc.Delete(context.Background(), 7777)
 	if !errors.Is(err, service.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+		t.Fatalf("expected ErrNotFound, got %v (flowN=%d)", err, flowN)
+	}
+	if flowN != 0 {
+		t.Fatalf("expected flowN=0 on NotFound, got %d", flowN)
 	}
 }

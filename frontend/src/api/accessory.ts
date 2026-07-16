@@ -57,7 +57,12 @@ export function updateAccessory(id: number, data: AccessoryUpdate): Promise<Acce
   return apiCall('PATCH', `/api/v1/accessories/${id}`, data);
 }
 
-export function deleteAccessory(id: number): Promise<void> {
+export interface DeleteAccessoryResult {
+  deleted: number;
+  flows_deleted: number;
+}
+
+export function deleteAccessory(id: number): Promise<DeleteAccessoryResult> {
   return apiCall('DELETE', `/api/v1/accessories/${id}`);
 }
 

@@ -52,8 +52,6 @@ func TranslateError(err error) (int, string) {
 		return http.StatusNotFound, "NOT_FOUND"
 	case errors.Is(err, service.ErrNameConflict):
 		return http.StatusConflict, "CONFLICT"
-	case errors.Is(err, service.ErrHasFlow):
-		return http.StatusConflict, "CONFLICT"
 	case errors.Is(err, service.ErrInsufficientStock):
 		return http.StatusConflict, "INSUFFICIENT_STOCK"
 	default:

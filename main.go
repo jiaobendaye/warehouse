@@ -44,7 +44,7 @@ func main() {
 	flowRepo := repo.NewFlowRepo(database)
 
 	svcs := Services{
-		Accessory:     service.NewAccessoryService(accRepo, flowRepo),
+		Accessory:     service.NewAccessoryService(database, accRepo, flowRepo),
 		Stock:         service.NewStockService(accRepo, flowRepo, database),
 		Flow:          service.NewFlowService(flowRepo),
 		Replenishment: service.NewReplenishmentService(accRepo),

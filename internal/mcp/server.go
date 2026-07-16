@@ -9,7 +9,6 @@
 //
 //	service.ErrNotFound                → -32004 (NOT_FOUND)
 //	service.ErrNameConflict             → -32005 (CONFLICT)
-//	service.ErrHasFlow                 → -32005 (CONFLICT)
 //	service.ErrInsufficientStock       → -32005 (CONFLICT, "INSUFFICIENT_STOCK")
 //	service.ErrInvalidInput            → -32600 (BAD_REQUEST)
 //	any other error                    → -32603 (InternalError, sanitized)
@@ -125,7 +124,6 @@ func Handler(srv *mcpsdk.Server) http.Handler {
 //	--------                       ----       -------
 //	ErrNotFound                    -32004     "not found"
 //	ErrNameConflict                -32005     "conflict" (incl. name)
-//	ErrHasFlow                     -32005     "conflict" (has flow)
 //	ErrInsufficientStock           -32005     "INSUFFICIENT_STOCK"
 //	ErrInvalidInput                -32600     "invalid input"
 //	(wrapped sentinels: detected   via errors.Is)
@@ -145,8 +143,6 @@ func TranslateError(err error) (int, string) {
 		return CodeNotFound, "not found"
 	case errors.Is(err, service.ErrNameConflict):
 		return CodeConflict, "conflict: name already exists"
-	case errors.Is(err, service.ErrHasFlow):
-		return CodeConflict, "conflict: accessory has inventory flows"
 	case errors.Is(err, service.ErrInsufficientStock):
 		// Use a recognisable tag the LLM can grep for; the full error
 		// (which includes have/need numbers) is appended for context.

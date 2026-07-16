@@ -11,6 +11,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,30 +26,31 @@ import (
 //	ErrInvalidInput  → 400 Bad Request
 //	ErrNameConflict  → 409 Conflict
 //	ErrNotFound      → 404 Not Found
-//	ErrHasFlow       → 409 Conflict
 var (
 	ErrInvalidInput = errors.New("service: invalid input")
 	ErrNameConflict = errors.New("service: name already exists")
 	ErrNotFound     = errors.New("service: not found")
-	ErrHasFlow      = errors.New("service: accessory has inventory flows; delete refused")
 )
 
 // AccessoryService is the business-logic entry point for the accessory
-// catalog. It owns validation, name uniqueness, and delete-with-flow
-// protection; it never touches the database directly.
+// catalog. It owns validation, name uniqueness, and the transactional
+// cascade-delete (accessory + its flows); it never touches the database
+// directly except for opening the delete transaction.
 type AccessoryService struct {
+	db   *sql.DB
 	acc  *repo.AccessoryRepo
 	flow *repo.FlowRepo
 }
 
-// NewAccessoryService wires the service to its repos. Both arguments are
-// required; the service panics if either is nil because there is no
-// sensible default for a business-logic layer that lacks persistence.
-func NewAccessoryService(acc *repo.AccessoryRepo, flow *repo.FlowRepo) *AccessoryService {
-	if acc == nil || flow == nil {
-		panic("service.NewAccessoryService: repos must not be nil")
+// NewAccessoryService wires the service to its repos and the underlying DB
+// (needed for transactional cascade-delete). All arguments are required;
+// the service panics if any is nil because there is no sensible default
+// for a business-logic layer that lacks persistence.
+func NewAccessoryService(db *sql.DB, acc *repo.AccessoryRepo, flow *repo.FlowRepo) *AccessoryService {
+	if db == nil || acc == nil || flow == nil {
+		panic("service.NewAccessoryService: db and repos must not be nil")
 	}
-	return &AccessoryService{acc: acc, flow: flow}
+	return &AccessoryService{db: db, acc: acc, flow: flow}
 }
 
 // Create validates the input and inserts a new accessory. A duplicate name
@@ -137,44 +139,46 @@ func (s *AccessoryService) Update(ctx context.Context, id int64, u domain.Access
 	return out, nil
 }
 
-// Delete removes an accessory, but only when no inventory_flow rows
-// reference it. When flows exist it returns ErrHasFlow. The count is
-// issued via the flow repo; the schema's FK RESTRICT on
-// inventory_flow.accessory_id is the atomicity guarantee — if a flow is
-// inserted between the count and the delete, the FK violation surfaces
-// here and we still translate it to ErrHasFlow.
-func (s *AccessoryService) Delete(ctx context.Context, id int64) error {
-	n, err := s.flow.CountByAccessory(ctx, id)
-	if err != nil {
-		return fmt.Errorf("delete accessory: count flows: %w", err)
-	}
-	if n > 0 {
-		return fmt.Errorf("%w: 该配件存在 %d 条流水记录，禁止删除", ErrHasFlow, n)
-	}
-	if err := s.acc.Delete(ctx, id); err != nil {
+// Delete removes an accessory and all its inventory_flow rows in a single
+// transaction. Returns the number of flow rows removed (0 when none). The
+// schema's FK RESTRICT on inventory_flow.accessory_id is a defense-in-depth
+// safety net — because we delete flows first inside the same tx, it never
+// fires in the happy path; if some future code path bypasses this method,
+// the FK still prevents orphaned flows.
+func (s *AccessoryService) Delete(ctx context.Context, id int64) (int64, error) {
+	// Verify the accessory exists up-front. This makes "delete 0 rows but
+	// return success" impossible — important because the row count alone
+	// cannot distinguish "nothing to delete" from "deleted successfully".
+	if _, err := s.acc.Get(ctx, id); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
-			return ErrNotFound
+			return 0, ErrNotFound
 		}
-		// Race window: a flow was inserted between CountByAccessory and
-		// Delete. SQLite's FOREIGN KEY RESTRICT surfaces as
-		// "FOREIGN KEY constraint failed" inside the repo error.
-		if isFKViolation(err) {
-			return fmt.Errorf("%w: 该配件存在流水记录，禁止删除", ErrHasFlow)
-		}
-		return fmt.Errorf("delete accessory: %w", err)
+		return 0, fmt.Errorf("delete accessory: lookup: %w", err)
 	}
-	logOp("accessory", "delete", "id", id)
-	return nil
-}
 
-// isFKViolation detects SQLite's foreign-key constraint failure message
-// inside an error chain. We match on the well-known English string
-// because SQLite does not export a typed error code across the driver.
-func isFKViolation(err error) bool {
-	if err == nil {
-		return false
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("delete accessory: begin tx: %w", err)
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "FOREIGN KEY constraint failed") ||
-		strings.Contains(msg, "foreign key constraint failed")
+	// Safe to call even after a successful Commit (Rollback returns sql.ErrTxDone,
+	// which we ignore).
+	defer tx.Rollback()
+
+	flowN, err := s.flow.DeleteByAccessory(ctx, tx, id)
+	if err != nil {
+		return 0, fmt.Errorf("delete accessory: delete flows: %w", err)
+	}
+	if err := s.acc.DeleteTx(ctx, tx, id); err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			// Race: someone else deleted the accessory between Get and DeleteTx.
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("delete accessory: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("delete accessory: commit: %w", err)
+	}
+
+	logOp("accessory", "delete", "id", id, "flows_deleted", flowN)
+	return flowN, nil
 }

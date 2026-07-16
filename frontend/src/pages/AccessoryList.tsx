@@ -10,6 +10,7 @@ import {
   exportAccessories,
   type Accessory,
 } from '../api/accessory';
+import { listFlows, type FlowListResponse } from '../api/flow';
 
 // ── shared styles ──────────────────────────────────────────────
 const thS: React.CSSProperties = {
@@ -220,14 +221,48 @@ export default function AccessoryList() {
   };
 
   // ── delete ──
-  const handleDelete = async (item: Accessory) => {
-    if (!window.confirm(`确定要删除配件 "${item.name}" 吗？`)) return;
+  const [pendingDelete, setPendingDelete] = useState<Accessory | null>(null);
+  const [flowCount, setFlowCount] = useState<number | null>(null);
+  const [countLoading, setCountLoading] = useState(false);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  const handleDelete = (item: Accessory) => {
+    setPendingDelete(item);
+  };
+
+  useEffect(() => {
+    if (!pendingDelete) {
+      setFlowCount(null);
+      return;
+    }
+    let cancelled = false;
+    setCountLoading(true);
+    setFlowCount(null);
+    listFlows({ accessory_id: pendingDelete.id })
+      .then((res: FlowListResponse) => {
+        if (!cancelled) setFlowCount(res.total);
+      })
+      .catch(() => {
+        if (!cancelled) setFlowCount(0); // fall back to 0 on error so user can still try
+      })
+      .finally(() => {
+        if (!cancelled) setCountLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [pendingDelete]);
+
+  const handleDeleteConfirm = async () => {
+    if (!pendingDelete) return;
+    setDeleteSubmitting(true);
     try {
-      await deleteAccessory(item.id);
-      showToast('success', '配件已删除');
+      const res = await deleteAccessory(pendingDelete.id);
+      showToast('success', `配件及 ${res.flows_deleted} 条流水已删除`);
+      setPendingDelete(null);
       setRefreshKey(k => k + 1);
     } catch (err: any) {
       showToast('error', err?.error?.message || '删除失败');
+    } finally {
+      setDeleteSubmitting(false);
     }
   };
 
@@ -403,6 +438,36 @@ export default function AccessoryList() {
 
       {createModal}
       {editModal}
+      {pendingDelete && (
+        <Modal title="删除配件" onClose={() => setPendingDelete(null)}>
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            <p style={{ margin: '0 0 12px 0' }}>
+              确定要删除配件「<strong>{pendingDelete.name}</strong>」吗？
+            </p>
+            <p style={{ margin: 0, color: '#ff4d4f' }}>
+              这将一并删除
+              <strong>{flowCount === null ? ' …' : ` ${flowCount} `}</strong>
+              条流水记录，此操作不可恢复。
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button
+              style={btnGray}
+              onClick={() => setPendingDelete(null)}
+              disabled={deleteSubmitting}
+            >
+              取消
+            </button>
+            <button
+              style={btnDanger}
+              onClick={handleDeleteConfirm}
+              disabled={deleteSubmitting || countLoading || flowCount === null}
+            >
+              {deleteSubmitting ? '删除中…' : '删除'}
+            </button>
+          </div>
+        </Modal>
+      )}
       <datalist id="stall-list">
         {stalls.map(s => <option key={s} value={s} />)}
       </datalist>

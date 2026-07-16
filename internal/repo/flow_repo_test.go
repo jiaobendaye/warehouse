@@ -176,3 +176,77 @@ func TestFlowRepo_CountByAccessory(t *testing.T) {
 		t.Fatalf("expected 0, got %d", n)
 	}
 }
+
+// TestFlowRepo_DeleteByAccessory_RemovesRows attaches three flows to one
+// accessory (plus one flow to a different accessory) and asserts that
+// DeleteByAccessory removes only the matching accessory's flows.
+func TestFlowRepo_DeleteByAccessory_RemovesRows(t *testing.T) {
+	d, cleanup := newTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	ar := repo.NewAccessoryRepo(d)
+	a, err := ar.Create(ctx, domain.Accessory{Name: "delete-by-acc-A"})
+	if err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	other, err := ar.Create(ctx, domain.Accessory{Name: "delete-by-acc-B"})
+	if err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+
+	r := repo.NewFlowRepo(d)
+	flows := []domain.InventoryFlow{
+		{AccessoryID: a.ID, Type: domain.FlowTypeIn, Quantity: 1, BalanceAfter: 1, OccurredAt: "2026-07-01T00:00:00Z"},
+		{AccessoryID: a.ID, Type: domain.FlowTypeOut, Quantity: 1, BalanceAfter: 0, OccurredAt: "2026-07-02T00:00:00Z"},
+		{AccessoryID: a.ID, Type: domain.FlowTypeIn, Quantity: 2, BalanceAfter: 2, OccurredAt: "2026-07-03T00:00:00Z"},
+		{AccessoryID: other.ID, Type: domain.FlowTypeIn, Quantity: 5, BalanceAfter: 5, OccurredAt: "2026-07-04T00:00:00Z"},
+	}
+	for _, f := range flows {
+		if _, err := r.Insert(ctx, nil, f); err != nil {
+			t.Fatalf("seed flow: %v", err)
+		}
+	}
+
+	n, err := r.DeleteByAccessory(ctx, nil, a.ID)
+	if err != nil {
+		t.Fatalf("DeleteByAccessory: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("DeleteByAccessory returned %d, want 3", n)
+	}
+
+	// The other accessory's flow must still be there.
+	gotN, err := r.CountByAccessory(ctx, other.ID)
+	if err != nil {
+		t.Fatalf("CountByAccessory(other): %v", err)
+	}
+	if gotN != 1 {
+		t.Fatalf("other accessory flows = %d, want 1", gotN)
+	}
+
+	// The target accessory's flows must all be gone.
+	targetN, err := r.CountByAccessory(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("CountByAccessory(target): %v", err)
+	}
+	if targetN != 0 {
+		t.Fatalf("target accessory flows = %d, want 0", targetN)
+	}
+}
+
+// TestFlowRepo_DeleteByAccessory_EmptyReturnsZero asserts that calling
+// DeleteByAccessory on an accessory with no flows returns 0 with no error.
+func TestFlowRepo_DeleteByAccessory_EmptyReturnsZero(t *testing.T) {
+	d, cleanup := newTestDB(t)
+	defer cleanup()
+	a := seedAccessory(t, d)
+	r := repo.NewFlowRepo(d)
+
+	n, err := r.DeleteByAccessory(context.Background(), nil, a.ID)
+	if err != nil {
+		t.Fatalf("DeleteByAccessory: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("DeleteByAccessory on empty accessory returned %d, want 0", n)
+	}
+}

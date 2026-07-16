@@ -763,3 +763,103 @@ func TestE2E_ClientRef_Idempotency(t *testing.T) {
 		}
 	}()
 }
+// TestE2E_DeleteCascadesFlows creates an accessory with multiple inbound
+// flows, deletes it via HTTP, and asserts:
+//  1. Response is 200 with the expected flows_deleted count.
+//  2. The accessory is gone (404 on subsequent GET).
+//  3. The flow ledger has 0 rows for that accessory.
+func TestE2E_DeleteCascadesFlows(t *testing.T) {
+	_, baseURL := startWebApp(t, 19991)
+
+	// Create a fresh accessory.
+	createBody := map[string]any{
+		"name":                fmt.Sprintf("cascade-%d", time.Now().UnixNano()),
+		"low_stock_threshold": 5,
+	}
+	createReq, _ := http.NewRequest("POST", baseURL+"/api/v1/accessories",
+		jsonBody(t, createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createResp := httpDo(t, createReq)
+	defer createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", createResp.StatusCode, readBody(t, createResp))
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, createResp, &created)
+
+	// Attach 2 inbound flows via HTTP.
+	inboundBody := map[string]any{
+		"accessory_id": created.ID,
+		"quantity":     3,
+		"unit_cost":    1.5,
+		"remark":       "seed-cascade",
+	}
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest("POST", baseURL+"/api/v1/stock/inbound",
+			jsonBody(t, inboundBody))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httpDo(t, req)
+		body := readBody(t, resp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			t.Fatalf("inbound %d: status=%d body=%s", i, resp.StatusCode, body)
+		}
+	}
+
+	// Sanity check: flow count is 2 before delete.
+	preReq, _ := http.NewRequest("GET",
+		fmt.Sprintf("%s/api/v1/flows?accessory_id=%d", baseURL, created.ID), nil)
+	preResp := httpDo(t, preReq)
+	var preBody struct {
+		Total int `json:"total"`
+	}
+	decodeBody(t, preResp, &preBody)
+	preResp.Body.Close()
+	if preBody.Total != 2 {
+		t.Fatalf("pre-delete flow total = %d, want 2", preBody.Total)
+	}
+
+	// Delete.
+	delReq, _ := http.NewRequest("DELETE",
+		fmt.Sprintf("%s/api/v1/accessories/%d", baseURL, created.ID), nil)
+	delResp := httpDo(t, delReq)
+	defer delResp.Body.Close()
+	if delResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200: %s", delResp.StatusCode, readBody(t, delResp))
+	}
+	var delBody struct {
+		Deleted      int64 `json:"deleted"`
+		FlowsDeleted int64 `json:"flows_deleted"`
+	}
+	decodeBody(t, delResp, &delBody)
+	if delBody.Deleted != created.ID {
+		t.Fatalf("deleted = %d, want %d", delBody.Deleted, created.ID)
+	}
+	if delBody.FlowsDeleted != 2 {
+		t.Fatalf("flows_deleted = %d, want 2", delBody.FlowsDeleted)
+	}
+
+	// Accessory should be gone.
+	getReq, _ := http.NewRequest("GET",
+		fmt.Sprintf("%s/api/v1/accessories/%d", baseURL, created.ID), nil)
+	getResp := httpDo(t, getReq)
+	getResp.Body.Close()
+	if getResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get-after-delete status = %d, want 404", getResp.StatusCode)
+	}
+
+	// Flow ledger should be empty for that accessory.
+	postReq, _ := http.NewRequest("GET",
+		fmt.Sprintf("%s/api/v1/flows?accessory_id=%d", baseURL, created.ID), nil)
+	postResp := httpDo(t, postReq)
+	defer postResp.Body.Close()
+	var postBody struct {
+		Total int `json:"total"`
+	}
+	decodeBody(t, postResp, &postBody)
+	if postBody.Total != 0 {
+		t.Fatalf("post-delete flow total = %d, want 0", postBody.Total)
+	}
+}

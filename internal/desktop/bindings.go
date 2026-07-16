@@ -122,7 +122,7 @@ func (a *App) UpdateAccessory(ctx context.Context, id int64, u domain.AccessoryU
 	return a.accessory.Update(ctx, id, u)
 }
 
-func (a *App) DeleteAccessory(ctx context.Context, id int64) error {
+func (a *App) DeleteAccessory(ctx context.Context, id int64) (int64, error) {
 	return a.accessory.Delete(ctx, id)
 }
 
