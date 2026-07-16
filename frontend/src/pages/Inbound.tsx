@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../components/Toast';
+import AccessorySelect from '../components/AccessorySelect';
 import { listAccessories, type Accessory } from '../api/accessory';
 import { inbound, batchInbound, executeFileInbound, type InboundCmd, type FileInboundResult } from '../api/stock';
 
@@ -171,12 +172,7 @@ export default function Inbound() {
       {mode === 'single' && (
         <div style={{ maxWidth: 400 }}>
           <Field label="配件 *">
-            <select style={inp} value={sAccId} onChange={e => setSAccId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">-- 请选择 --</option>
-              {accessories.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <AccessorySelect accessories={accessories} value={sAccId} onChange={setSAccId} />
           </Field>
           <Field label="数量 *">
             <input style={inp} type="number" min={1} value={sQty} onChange={e => setSQty(Math.max(1, Number(e.target.value)))} />
@@ -213,12 +209,7 @@ export default function Inbound() {
               {rows.map((r, i) => (
                 <tr key={r.key} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
                   <td style={tdS}>
-                    <select style={{ ...inp, width: 200 }} value={r.accessory_id} onChange={e => updateRow(r.key, { accessory_id: e.target.value ? Number(e.target.value) : '' })}>
-                      <option value="">-- 请选择 --</option>
-                      {accessories.map(a => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
+                    <AccessorySelect accessories={accessories} value={r.accessory_id} onChange={v => updateRow(r.key, { accessory_id: v })} width={200} />
                   </td>
                   <td style={tdS}>
                     <input style={{ ...inp, width: 80 }} type="number" min={1} value={r.quantity} onChange={e => updateRow(r.key, { quantity: Math.max(1, Number(e.target.value)) })} />

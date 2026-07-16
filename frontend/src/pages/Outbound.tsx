@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useToast } from '../components/Toast';
+import AccessorySelect from '../components/AccessorySelect';
 import { listAccessories, type Accessory } from '../api/accessory';
 import { outbound, batchOutbound, previewFileOutbound, executeFileOutbound, type OutboundCmd, type FileOutboundPreview, type FileForceOutboundResult } from '../api/stock';
 import { scan } from '../api/replenishment';
@@ -213,12 +214,7 @@ export default function Outbound() {
       {mode === 'single' && (
         <div style={{ maxWidth: 400 }}>
           <Field label="配件 *">
-            <select style={inp} value={sAccId} onChange={e => setSAccId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">-- 请选择 --</option>
-              {accessories.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <AccessorySelect accessories={accessories} value={sAccId} onChange={setSAccId} />
           </Field>
           <Field label="数量 *">
             <input style={inp} type="number" min={1} value={sQty} onChange={e => setSQty(Math.max(1, Number(e.target.value)))} />
@@ -254,12 +250,7 @@ export default function Outbound() {
               {rows.map((r, i) => (
                 <tr key={r.key} style={{ background: i % 2 === 0 ? '#f9f9f9' : '#fff' }}>
                   <td style={tdS}>
-                    <select style={{ ...inp, width: 200 }} value={r.accessory_id} onChange={e => updateRow(r.key, { accessory_id: e.target.value ? Number(e.target.value) : '' })}>
-                      <option value="">-- 请选择 --</option>
-                      {accessories.map(a => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
+                    <AccessorySelect accessories={accessories} value={r.accessory_id} onChange={v => updateRow(r.key, { accessory_id: v })} width={200} />
                   </td>
                   <td style={tdS}>
                     <input style={{ ...inp, width: 80 }} type="number" min={1} value={r.quantity} onChange={e => updateRow(r.key, { quantity: Math.max(1, Number(e.target.value)) })} />
@@ -348,6 +339,14 @@ export default function Outbound() {
                     {preview.not_found_count > 0 && (
                       <span style={{ color: '#1890ff' }}>（其中 {preview.not_found_count} 种将自动新建）</span>
                     )}
+                    {(() => {
+                      const n = (preview.items || []).filter(i =>
+                        i.current_stock >= i.quantity &&
+                        i.low_stock_threshold > 0 &&
+                        (i.current_stock - i.quantity) < i.low_stock_threshold
+                      ).length;
+                      return n > 0 ? <span style={{ color: '#faad14' }}>（{n} 种出库后将低于阈值）</span> : null;
+                    })()}
                   </div>
                 </div>
 
@@ -367,10 +366,17 @@ export default function Outbound() {
                           <td style={tdS}>{it.name}</td>
                           <td style={tdS}>{it.quantity}</td>
                           <td style={tdS}>
-                            {it.current_stock < it.quantity
-                              ? <span style={{ color: '#faad14', fontSize: 12 }}>⚠️ 缺{it.quantity - it.current_stock}（库存→0，阈值+{it.quantity - it.current_stock}）</span>
-                              : <span style={{ color: '#52c41a', fontSize: 12 }}>✅ 库存充足</span>
-                            }
+                            {(() => {
+                              const after = it.current_stock - it.quantity;
+                              if (it.current_stock < it.quantity) {
+                                const short = it.quantity - it.current_stock;
+                                return <span style={{ color: '#faad14', fontSize: 12 }}>⚠️ 缺{short}（库存→0，阈值+{short}）</span>;
+                              }
+                              if (it.low_stock_threshold > 0 && after < it.low_stock_threshold) {
+                                return <span style={{ color: '#faad14', fontSize: 12 }}>⚠️ 出库后 {after}，低于阈值 {it.low_stock_threshold}</span>;
+                              }
+                              return <span style={{ color: '#52c41a', fontSize: 12 }}>✅ 库存充足</span>;
+                            })()}
                           </td>
                         </tr>
                       ))}

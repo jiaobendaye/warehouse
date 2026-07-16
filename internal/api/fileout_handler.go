@@ -25,10 +25,11 @@ func NewFileOutboundHandler(stockSvc *service.StockService, accSvc *service.Acce
 
 // FileOutboundPreviewItem is one matched row in the preview response.
 type FileOutboundPreviewItem struct {
-	AccessoryID  int64  `json:"accessory_id"`
-	Name         string `json:"name"`
-	Quantity     int64  `json:"quantity"`
-	CurrentStock int64  `json:"current_stock"`
+	AccessoryID      int64  `json:"accessory_id"`
+	Name             string `json:"name"`
+	Quantity         int64  `json:"quantity"`
+	CurrentStock     int64  `json:"current_stock"`
+	LowStockThreshold int64 `json:"low_stock_threshold"`
 }
 
 // FileOutboundNotFound is one unmatched name from the xlsx.
@@ -76,10 +77,11 @@ func (h *FileOutboundHandler) Preview(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		preview.Items = append(preview.Items, FileOutboundPreviewItem{
-			AccessoryID:  acc.ID,
-			Name:         acc.Name,
-			Quantity:     entry.qty,
-			CurrentStock: acc.CurrentStock,
+			AccessoryID:       acc.ID,
+			Name:              acc.Name,
+			Quantity:          entry.qty,
+			CurrentStock:      acc.CurrentStock,
+			LowStockThreshold: acc.LowStockThreshold,
 		})
 	}
 

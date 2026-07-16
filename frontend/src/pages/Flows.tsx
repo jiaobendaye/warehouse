@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../components/Toast';
+import AccessorySelect from '../components/AccessorySelect';
 import { listAccessories, type Accessory } from '../api/accessory';
 import { listFlows, type FlowListParams } from '../api/flow';
 import type { InventoryFlow } from '../api/stock';
@@ -100,12 +101,7 @@ export default function Flows() {
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
         <div>
           <label style={{ display: 'block', fontSize: 12, marginBottom: 2 }}>配件</label>
-          <select style={{ ...inp, width: 160 }} value={filterAccId} onChange={e => setFilterAccId(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">全部</option>
-            {accessories.map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          <AccessorySelect accessories={accessories} value={filterAccId} onChange={setFilterAccId} placeholder="全部" width={160} />
         </div>
         <div>
           <label style={{ display: 'block', fontSize: 12, marginBottom: 2 }}>类型</label>
