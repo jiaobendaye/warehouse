@@ -17,12 +17,26 @@ export interface FlowListResponse {
   offset: number;
 }
 
+// toDateRange converts a date-only value ("YYYY-MM-DD", as produced by
+// <input type="date">) into an RFC3339 timestamp the backend accepts.
+// `end` controls whether the time is clamped to start (00:00:00Z) or
+// end (23:59:59Z) of that day. Values already in RFC3339 form pass through.
+function toDateRange(v: string, end: boolean): string {
+  if (!v) return v;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    return v + (end ? 'T23:59:59Z' : 'T00:00:00Z');
+  }
+  return v;
+}
+
 export function listFlows(params: FlowListParams = {}): Promise<FlowListResponse> {
   const sp = new URLSearchParams();
   if (params.accessory_id) sp.set('accessory_id', String(params.accessory_id));
   if (params.type) sp.set('type', params.type);
-  if (params.from) sp.set('from', params.from);
-  if (params.to) sp.set('to', params.to);
+  const from = toDateRange(params.from || '', false);
+  const to = toDateRange(params.to || '', true);
+  if (from) sp.set('from', from);
+  if (to) sp.set('to', to);
   if (params.limit) sp.set('limit', String(params.limit));
   if (params.offset) sp.set('offset', String(params.offset));
   return apiCall('GET', `/api/v1/flows?${sp}`);
